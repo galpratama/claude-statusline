@@ -2,6 +2,8 @@
 
 Custom statusline for Claude Code that displays AI model information, costs, git status, and development environment details.
 
+![Demo](demo.png)
+
 ## Quick Install
 
 ### Automatic Installation (for Claude Code / LLMs)
