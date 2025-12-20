@@ -8,7 +8,7 @@
 # - Git operations use --no-optional-locks for speed
 # - Minimal file system operations
 
-set -o pipefail
+# Note: Removed set -o pipefail as it causes non-zero exit codes from grep/git
 
 # ============================================================================
 # CONSTANTS
@@ -436,59 +436,76 @@ get_subscription_info() {
 # LANGUAGE & PACKAGE MANAGER DETECTION
 # ============================================================================
 
+# Returns: "pkg1+pkg2|lang1+lang2" format
 detect_dev_environment() {
     local dir="$1"
-    local -n pkg_managers=$2
-    local -n languages=$3
+    local pkg_managers=""
+    local languages=""
 
     # JavaScript/Node.js
     if [ -f "$dir/pnpm-lock.yaml" ]; then
-        pkg_managers+=("pnpm")
-        command -v node >/dev/null 2>&1 && languages+=("Node $(node --version 2>/dev/null | sed 's/v//')")
+        pkg_managers="pnpm"
+        command -v node >/dev/null 2>&1 && languages="Node $(node --version 2>/dev/null | sed 's/v//')"
     elif [ -f "$dir/bun.lockb" ]; then
-        pkg_managers+=("bun")
-        command -v bun >/dev/null 2>&1 && languages+=("Bun $(bun --version 2>/dev/null)")
+        pkg_managers="bun"
+        command -v bun >/dev/null 2>&1 && languages="Bun $(bun --version 2>/dev/null)"
     elif [ -f "$dir/yarn.lock" ]; then
-        pkg_managers+=("yarn")
-        command -v node >/dev/null 2>&1 && languages+=("Node $(node --version 2>/dev/null | sed 's/v//')")
+        pkg_managers="yarn"
+        command -v node >/dev/null 2>&1 && languages="Node $(node --version 2>/dev/null | sed 's/v//')"
     elif [ -f "$dir/package-lock.json" ] || [ -f "$dir/package.json" ]; then
-        pkg_managers+=("npm")
-        command -v node >/dev/null 2>&1 && languages+=("Node $(node --version 2>/dev/null | sed 's/v//')")
+        pkg_managers="npm"
+        command -v node >/dev/null 2>&1 && languages="Node $(node --version 2>/dev/null | sed 's/v//')"
     fi
 
     # PHP
     if [ -f "$dir/composer.json" ]; then
-        pkg_managers+=("composer")
-        command -v php >/dev/null 2>&1 && languages+=("PHP $(php --version 2>/dev/null | head -1 | awk '{print $2}')")
+        [ -n "$pkg_managers" ] && pkg_managers+="+composer" || pkg_managers="composer"
+        if command -v php >/dev/null 2>&1; then
+            local php_ver="PHP $(php --version 2>/dev/null | head -1 | awk '{print $2}')"
+            [ -n "$languages" ] && languages+="+$php_ver" || languages="$php_ver"
+        fi
     fi
 
     # Ruby
     if [ -f "$dir/Gemfile" ]; then
-        pkg_managers+=("gem")
-        command -v ruby >/dev/null 2>&1 && languages+=("Ruby $(ruby --version 2>/dev/null | awk '{print $2}')")
+        [ -n "$pkg_managers" ] && pkg_managers+="+gem" || pkg_managers="gem"
+        if command -v ruby >/dev/null 2>&1; then
+            local ruby_ver="Ruby $(ruby --version 2>/dev/null | awk '{print $2}')"
+            [ -n "$languages" ] && languages+="+$ruby_ver" || languages="$ruby_ver"
+        fi
     fi
 
     # Python
     if [ -f "$dir/requirements.txt" ] || [ -f "$dir/Pipfile" ] || [ -f "$dir/pyproject.toml" ]; then
-        pkg_managers+=("pip")
+        [ -n "$pkg_managers" ] && pkg_managers+="+pip" || pkg_managers="pip"
         if command -v python3 >/dev/null 2>&1; then
-            languages+=("Python $(python3 --version 2>/dev/null | awk '{print $2}')")
+            local py_ver="Python $(python3 --version 2>/dev/null | awk '{print $2}')"
+            [ -n "$languages" ] && languages+="+$py_ver" || languages="$py_ver"
         elif command -v python >/dev/null 2>&1; then
-            languages+=("Python $(python --version 2>/dev/null | awk '{print $2}')")
+            local py_ver="Python $(python --version 2>/dev/null | awk '{print $2}')"
+            [ -n "$languages" ] && languages+="+$py_ver" || languages="$py_ver"
         fi
     fi
 
     # Go
     if [ -f "$dir/go.mod" ]; then
-        pkg_managers+=("go")
-        command -v go >/dev/null 2>&1 && languages+=("Go $(go version 2>/dev/null | awk '{print $3}' | sed 's/go//')")
+        [ -n "$pkg_managers" ] && pkg_managers+="+go" || pkg_managers="go"
+        if command -v go >/dev/null 2>&1; then
+            local go_ver="Go $(go version 2>/dev/null | awk '{print $3}' | sed 's/go//')"
+            [ -n "$languages" ] && languages+="+$go_ver" || languages="$go_ver"
+        fi
     fi
 
     # Rust
     if [ -f "$dir/Cargo.toml" ]; then
-        pkg_managers+=("cargo")
-        command -v rustc >/dev/null 2>&1 && languages+=("Rust $(rustc --version 2>/dev/null | awk '{print $2}')")
+        [ -n "$pkg_managers" ] && pkg_managers+="+cargo" || pkg_managers="cargo"
+        if command -v rustc >/dev/null 2>&1; then
+            local rust_ver="Rust $(rustc --version 2>/dev/null | awk '{print $2}')"
+            [ -n "$languages" ] && languages+="+$rust_ver" || languages="$rust_ver"
+        fi
     fi
+
+    echo "${pkg_managers}|${languages}"
 }
 
 # ============================================================================
@@ -503,8 +520,14 @@ detect_running_servers() {
     local -a listened_ports ignored_ports active_servers
 
     if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
-        mapfile -t listened_ports < <(jq -r '.features.listened_ports[]? // empty' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
-        mapfile -t ignored_ports < <(jq -r '.features.ignored_ports[]? // empty' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
+        # Read ports into arrays (compatible with bash 3.x and zsh)
+        while IFS= read -r port; do
+            [ -n "$port" ] && listened_ports+=("$port")
+        done < <(jq -r '.features.listened_ports[]? // empty' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
+
+        while IFS= read -r port; do
+            [ -n "$port" ] && ignored_ports+=("$port")
+        done < <(jq -r '.features.ignored_ports[]? // empty' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
     fi
 
     # Default ports
@@ -796,12 +819,11 @@ main() {
     files_edited_count=${json_files_edited:-$(cat "$stats_files_file" 2>/dev/null || echo "0")}
     bash_commands_count=${json_bash_commands:-$(cat "$stats_bash_file" 2>/dev/null || echo "0")}
 
-    # Detect environment
-    local package_managers=() prog_langs=()
-    detect_dev_environment "$current_dir" package_managers prog_langs
-    local package_manager prog_lang
-    [ ${#package_managers[@]} -gt 0 ] && package_manager=$(IFS='+'; echo "${package_managers[*]}")
-    [ ${#prog_langs[@]} -gt 0 ] && prog_lang=$(IFS='+'; echo "${prog_langs[*]}")
+    # Detect environment (returns "pkg_manager|language" format)
+    local dev_env_result package_manager prog_lang
+    dev_env_result=$(detect_dev_environment "$current_dir")
+    package_manager=$(echo "$dev_env_result" | cut -d'|' -f1)
+    prog_lang=$(echo "$dev_env_result" | cut -d'|' -f2)
 
     # Detect servers
     local running_servers
@@ -925,3 +947,4 @@ main() {
 
 # Run main
 main
+exit 0
