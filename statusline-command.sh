@@ -230,6 +230,88 @@ format_model_name() {
     # Handle simple format like "Sonnet 4"
     elif [[ "$name" =~ ^(Opus|Sonnet|Haiku)\ 4$ ]]; then
         echo "${BASH_REMATCH[1]} 4.5"
+
+    # Handle MiniMax models
+    elif [[ "$name" =~ minimaxai/minimax-m([0-9]) ]]; then
+        echo "MiniMax M${BASH_REMATCH[1]}"
+
+    # Handle Moonshot/Kimi models
+    elif [[ "$name" =~ moonshotai/kimi-k([0-9])-(thinking|instruct)(-[0-9]+)? ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local mode="${BASH_REMATCH[2]}"
+        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        echo "Kimi K${version} ${mode}"
+
+    # Handle Mistral models
+    elif [[ "$name" =~ mistralai/mistral-nemotron ]]; then
+        echo "Mistral Nemotron"
+    elif [[ "$name" =~ mistralai/devstral-([0-9]+) ]]; then
+        echo "Devstral ${BASH_REMATCH[1]}"
+    elif [[ "$name" =~ mistral-large-([0-9])-.* ]]; then
+        echo "Mistral Large ${BASH_REMATCH[1]}"
+
+    # Handle Llama models
+    elif [[ "$name" =~ llama([0-9])\.?([0-9])?-([0-9]+)b-(instruct|base) ]]; then
+        local major="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        local size="${BASH_REMATCH[3]}"
+        local type="${BASH_REMATCH[4]}"
+        type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
+        if [ -n "$minor" ]; then
+            echo "Llama ${major}.${minor} ${size}B ${type}"
+        else
+            echo "Llama ${major} ${size}B ${type}"
+        fi
+
+    # Handle DeepSeek models
+    elif [[ "$name" =~ deepseek-r([0-9])-distill-llama-([0-9]+)b ]]; then
+        echo "DeepSeek R${BASH_REMATCH[1]} Distill ${BASH_REMATCH[2]}B"
+    elif [[ "$name" =~ deepseek-ai/deepseek-v([0-9])\.([0-9])-(terminus)? ]]; then
+        local major="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        local variant="${BASH_REMATCH[3]}"
+        if [ -n "$variant" ]; then
+            echo "DeepSeek V${major}.${minor} Terminus"
+        else
+            echo "DeepSeek V${major}.${minor}"
+        fi
+    elif [[ "$name" =~ deepseek-v([0-9])\.([0-9]) ]]; then
+        echo "DeepSeek V${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+
+    # Handle Qwen models
+    elif [[ "$name" =~ qwen/qwen([0-9])-(next-)?([0-9]+)b ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local next="${BASH_REMATCH[2]}"
+        local size="${BASH_REMATCH[3]}"
+        if [ -n "$next" ]; then
+            echo "Qwen${version} Next ${size}B"
+        else
+            echo "Qwen${version} ${size}B"
+        fi
+    elif [[ "$name" =~ alibaba-qwen([0-9])-(coder-)?([0-9]+)b ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local coder="${BASH_REMATCH[2]}"
+        local size="${BASH_REMATCH[3]}"
+        if [ -n "$coder" ]; then
+            echo "Qwen${version} Coder ${size}B"
+        else
+            echo "Qwen${version} ${size}B"
+        fi
+
+    # Handle OpenAI variants
+    elif [[ "$name" =~ openai/gpt-oss-([0-9]+)b ]]; then
+        echo "GPT OSS ${BASH_REMATCH[1]}B"
+    elif [[ "$name" =~ openai-gpt-oss-([0-9]+)b ]]; then
+        echo "GPT OSS ${BASH_REMATCH[1]}B"
+
+    # Handle GLM models
+    elif [[ "$name" =~ z-ai/glm-([0-9])\.([0-9])-air ]]; then
+        echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} Air"
+
+    # Handle Kwai models
+    elif [[ "$name" =~ kwaipilot/kat-coder-pro ]]; then
+        echo "KAT Coder Pro"
+
     else
         echo "$name"
     fi
