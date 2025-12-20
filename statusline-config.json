@@ -1,0 +1,91 @@
+{
+  "version": "1.0.0",
+  "performance": {
+    "cache_ttl": 5,
+    "enable_caching": true
+  },
+  "segments": {
+    "ai": {
+      "enabled": true,
+      "show_provider": true,
+      "show_model": true,
+      "show_cost": true,
+      "show_cache_efficiency": true,
+      "show_rate_limit": true,
+      "show_context": true,
+      "show_message_count": true,
+      "show_mcp_servers": true,
+      "show_tools_count": true,
+      "show_response_time": true
+    },
+    "git": {
+      "enabled": true,
+      "show_directory": true,
+      "show_branch": true,
+      "show_status": true,
+      "show_sync_indicator": true,
+      "show_file_changes": true,
+      "show_last_commit": true,
+      "show_commits_today": true
+    },
+    "dev": {
+      "enabled": true,
+      "show_session_start": true,
+      "show_current_time": true,
+      "show_language": true,
+      "show_package_manager": true,
+      "show_lint_errors": false,
+      "show_running_servers": true
+    }
+  },
+  "features": {
+    "lint_checking": false,
+    "server_detection": true,
+    "listened_ports": [
+      80,
+      3000,
+      3001,
+      3306,
+      4200,
+      5173,
+      5174,
+      5432,
+      6379,
+      8000,
+      8001,
+      8080,
+      8888,
+      9000
+    ],
+    "ignored_ports": [80]
+  },
+  "display": {
+    "theme": "default"
+  },
+  "subscriptions": {
+    "Claude": {
+      "type": "monthly",
+      "renewal_date": "2025-12-22"
+    },
+    "Antigravity": {
+      "type": "monthly",
+      "renewal_date": "2026-04-01"
+    },
+    "Kiro": {
+      "type": "monthly",
+      "renewal_date": "2026-01-01"
+    },
+    "MiniMax": {
+      "type": "monthly",
+      "renewal_date": "2025-12-29"
+    },
+    "GLM": {
+      "type": "yearly",
+      "renewal_date": "2026-12-13"
+    },
+    "Kimi": {
+      "type": "monthly",
+      "renewal_date": "2025-12-30"
+    }
+  }
+}
