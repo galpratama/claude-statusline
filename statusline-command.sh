@@ -210,8 +210,21 @@ load_config() {
 format_model_name() {
     local name="$1"
 
-    # Handle Antigravity/Gemini/Kiro proxy models
-    if [[ "$name" =~ gemini-claude-(opus|sonnet|haiku)-([0-9])-([0-9])-(thinking|extended) ]]; then
+    # Handle Kiro AWS proxy models
+    if [[ "$name" =~ kiro-claude-(opus|sonnet|haiku)-([0-9])-([0-9])(-agentic)? ]]; then
+        local tier="${BASH_REMATCH[1]}"
+        local major="${BASH_REMATCH[2]}"
+        local minor="${BASH_REMATCH[3]}"
+        local mode="${BASH_REMATCH[4]}"
+        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        if [ -n "$mode" ]; then
+            echo "${tier} ${major}.${minor} Agentic"
+        else
+            echo "${tier} ${major}.${minor}"
+        fi
+
+    # Handle Antigravity/Gemini proxy models for Claude
+    elif [[ "$name" =~ gemini-claude-(opus|sonnet|haiku)-([0-9])-([0-9])-(thinking|extended) ]]; then
         local tier="${BASH_REMATCH[1]}"
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
@@ -219,6 +232,22 @@ format_model_name() {
         tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
         mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
         echo "${tier} ${major}.${minor} ${mode}"
+
+    # Handle Claude 3.x models with version dates (e.g., claude-3-5-sonnet-20241022)
+    elif [[ "$name" =~ claude-([0-9])-([0-9])-(opus|sonnet|haiku)-[0-9]{8} ]]; then
+        local major="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        local tier="${BASH_REMATCH[3]}"
+        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        echo "${tier} ${major}.${minor}"
+
+    # Handle standard Claude model names with version dates
+    elif [[ "$name" =~ claude-(opus|sonnet|haiku)-([0-9])-([0-9])-[0-9]{8} ]]; then
+        local tier="${BASH_REMATCH[1]}"
+        local major="${BASH_REMATCH[2]}"
+        local minor="${BASH_REMATCH[3]}"
+        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        echo "${tier} ${major}.${minor}"
 
     # Handle standard Claude model names
     elif [[ "$name" =~ claude-(opus|sonnet|haiku)-([0-9])\.?([0-9])?-?[0-9]* ]]; then
@@ -242,16 +271,180 @@ format_model_name() {
     elif [[ "$name" =~ ^(Opus|Sonnet|Haiku)\ 4$ ]]; then
         echo "${BASH_REMATCH[1]} 4.5"
 
-    # Handle MiniMax models
-    elif [[ "$name" =~ minimaxai/minimax-m([0-9]) ]]; then
-        echo "MiniMax M${BASH_REMATCH[1]}"
+    # Handle OpenAI GPT-5 family
+    elif [[ "$name" =~ gpt-5\.([0-9])(-codex)?(-mini|-max|-nano)? ]]; then
+        local minor="${BASH_REMATCH[1]}"
+        local codex="${BASH_REMATCH[2]}"
+        local variant="${BASH_REMATCH[3]}"
+        local display="GPT-5.${minor}"
+        [ -n "$codex" ] && display+=" Codex"
+        if [ "$variant" = "-mini" ]; then
+            display+=" Mini"
+        elif [ "$variant" = "-max" ]; then
+            display+=" Max"
+        elif [ "$variant" = "-nano" ]; then
+            display+=" Nano"
+        fi
+        echo "$display"
+    elif [[ "$name" =~ gpt-5(-codex)?(-mini|-nano)? ]]; then
+        local codex="${BASH_REMATCH[1]}"
+        local variant="${BASH_REMATCH[2]}"
+        local display="GPT-5"
+        [ -n "$codex" ] && display+=" Codex"
+        [ "$variant" = "-mini" ] && display+=" Mini"
+        [ "$variant" = "-nano" ] && display+=" Nano"
+        echo "$display"
 
-    # Handle Moonshot/Kimi models
+    # Handle Gemini 3.x models
+    elif [[ "$name" =~ gemini-3-(pro|flash)(-image)?-preview ]]; then
+        local tier="${BASH_REMATCH[1]}"
+        local image="${BASH_REMATCH[2]}"
+        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        if [ -n "$image" ]; then
+            echo "Gemini 3 ${tier} Image"
+        else
+            echo "Gemini 3 ${tier}"
+        fi
+
+    # Handle Gemini 2.x computer-use without tier (e.g., gemini-2.5-computer-use-preview-10-2025)
+    elif [[ "$name" =~ gemini-2\.([0-9])-computer-use-preview(-[0-9]+-[0-9]+)? ]]; then
+        local minor="${BASH_REMATCH[1]}"
+        echo "Gemini 2.${minor} Computer"
+
+    # Handle Gemini 2.x models with computer-use mode and tier (with or without date suffix)
+    elif [[ "$name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)?-computer-use-preview(-[0-9]+-[0-9]+)? ]]; then
+        local minor="${BASH_REMATCH[1]}"
+        local tier="${BASH_REMATCH[2]}"
+        local lite="${BASH_REMATCH[3]}"
+        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        local display="Gemini 2.${minor} ${tier}"
+        [ -n "$lite" ] && display+=" Lite"
+        display+=" Computer"
+        echo "$display"
+    elif [[ "$name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)?-preview ]]; then
+        local minor="${BASH_REMATCH[1]}"
+        local tier="${BASH_REMATCH[2]}"
+        local lite="${BASH_REMATCH[3]}"
+        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        local display="Gemini 2.${minor} ${tier}"
+        [ -n "$lite" ] && display+=" Lite"
+        echo "$display"
+
+    # Handle standard Gemini 2.x models
+    elif [[ "$name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)? ]]; then
+        local minor="${BASH_REMATCH[1]}"
+        local tier="${BASH_REMATCH[2]}"
+        local lite="${BASH_REMATCH[3]}"
+        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        local display="Gemini 2.${minor} ${tier}"
+        [ -n "$lite" ] && display+=" Lite"
+        echo "$display"
+
+    # Handle Qwen3 models with thinking/instruct modes
+    elif [[ "$name" =~ qwen3-([0-9]+)b-a22b-(thinking|instruct)(-[0-9]+)? ]]; then
+        local size="${BASH_REMATCH[1]}"
+        local mode="${BASH_REMATCH[2]}"
+        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        echo "Qwen3 ${size}B ${mode}"
+
+    # Handle Qwen3 VL Plus specifically (must come before generic pattern)
+    elif [[ "$name" =~ qwen3-vl-plus ]]; then
+        echo "Qwen3 VL Plus"
+
+    # Handle Qwen3 specialized variants
+    elif [[ "$name" =~ qwen3-(coder|max)-(flash|plus|preview) ]]; then
+        local type="${BASH_REMATCH[1]}"
+        local variant="${BASH_REMATCH[2]}"
+        type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
+        variant="$(echo ${variant:0:1} | tr '[:lower:]' '[:upper:]')${variant:1}"
+        echo "Qwen3 ${type} ${variant}"
+
+    # Handle Qwen3 simple variants (max only, since vl-plus handled above)
+    elif [[ "$name" =~ qwen3-max ]]; then
+        echo "Qwen3 Max"
+
+    # Handle Qwen3 size-based models
+    elif [[ "$name" =~ qwen3-([0-9]+)b ]]; then
+        echo "Qwen3 ${BASH_REMATCH[1]}B"
+
+    # Handle older Qwen models
+    elif [[ "$name" =~ qwen/qwen([0-9])-(next-)?([0-9]+)b ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local next="${BASH_REMATCH[2]}"
+        local size="${BASH_REMATCH[3]}"
+        if [ -n "$next" ]; then
+            echo "Qwen${version} Next ${size}B"
+        else
+            echo "Qwen${version} ${size}B"
+        fi
+    elif [[ "$name" =~ alibaba-qwen([0-9])-(coder-)?([0-9]+)b ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local coder="${BASH_REMATCH[2]}"
+        local size="${BASH_REMATCH[3]}"
+        if [ -n "$coder" ]; then
+            echo "Qwen${version} Coder ${size}B"
+        else
+            echo "Qwen${version} ${size}B"
+        fi
+
+    # Handle Kimi/Moonshot K2 models
+    elif [[ "$name" =~ kimi-k2-(thinking|instruct)(-[0-9]+)? ]]; then
+        local mode="${BASH_REMATCH[1]}"
+        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        echo "Kimi K2 ${mode}"
+    elif [[ "$name" =~ kimi-k2 ]]; then
+        echo "Kimi K2"
     elif [[ "$name" =~ moonshotai/kimi-k([0-9])-(thinking|instruct)(-[0-9]+)? ]]; then
         local version="${BASH_REMATCH[1]}"
         local mode="${BASH_REMATCH[2]}"
         mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
         echo "Kimi K${version} ${mode}"
+
+    # Handle DeepSeek V3.x models
+    elif [[ "$name" =~ deepseek-v([0-9])\.([0-9])-(chat|reasoner) ]]; then
+        local major="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        local mode="${BASH_REMATCH[3]}"
+        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        echo "DeepSeek V${major}.${minor} ${mode}"
+
+    # Handle DeepSeek R1 and distill models
+    elif [[ "$name" =~ deepseek-r([0-9])(-distill-llama-([0-9]+)b)? ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local distill="${BASH_REMATCH[2]}"
+        local size="${BASH_REMATCH[3]}"
+        if [ -n "$distill" ]; then
+            echo "DeepSeek R${version} Distill ${size}B"
+        else
+            echo "DeepSeek R${version}"
+        fi
+
+    # Handle DeepSeek versioned models
+    elif [[ "$name" =~ deepseek-ai/deepseek-v([0-9])\.([0-9])-(terminus)? ]]; then
+        local major="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        local variant="${BASH_REMATCH[3]}"
+        if [ -n "$variant" ]; then
+            echo "DeepSeek V${major}.${minor} Terminus"
+        else
+            echo "DeepSeek V${major}.${minor}"
+        fi
+    elif [[ "$name" =~ deepseek-v([0-9])\.([0-9]) ]]; then
+        echo "DeepSeek V${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+    elif [[ "$name" =~ deepseek-v([0-9])$ ]]; then
+        echo "DeepSeek V${BASH_REMATCH[1]}"
+
+    # Handle GLM models
+    elif [[ "$name" =~ glm-([0-9])\.([0-9]) ]]; then
+        echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+    elif [[ "$name" =~ z-ai/glm-([0-9])\.([0-9])-air ]]; then
+        echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} Air"
+
+    # Handle MiniMax models
+    elif [[ "$name" =~ minimax-m([0-9]) ]]; then
+        echo "MiniMax M${BASH_REMATCH[1]}"
+    elif [[ "$name" =~ minimaxai/minimax-m([0-9]) ]]; then
+        echo "MiniMax M${BASH_REMATCH[1]}"
 
     # Handle Mistral models
     elif [[ "$name" =~ mistralai/mistral-nemotron ]]; then
@@ -274,54 +467,32 @@ format_model_name() {
             echo "Llama ${major} ${size}B ${type}"
         fi
 
-    # Handle DeepSeek models
-    elif [[ "$name" =~ deepseek-r([0-9])-distill-llama-([0-9]+)b ]]; then
-        echo "DeepSeek R${BASH_REMATCH[1]} Distill ${BASH_REMATCH[2]}B"
-    elif [[ "$name" =~ deepseek-ai/deepseek-v([0-9])\.([0-9])-(terminus)? ]]; then
-        local major="${BASH_REMATCH[1]}"
-        local minor="${BASH_REMATCH[2]}"
-        local variant="${BASH_REMATCH[3]}"
+    # Handle OpenAI OSS variants
+    elif [[ "$name" =~ gpt-oss-([0-9]+)b-(medium|large)? ]]; then
+        local size="${BASH_REMATCH[1]}"
+        local variant="${BASH_REMATCH[2]}"
         if [ -n "$variant" ]; then
-            echo "DeepSeek V${major}.${minor} Terminus"
+            variant="$(echo ${variant:0:1} | tr '[:lower:]' '[:upper:]')${variant:1}"
+            echo "GPT OSS ${size}B ${variant}"
         else
-            echo "DeepSeek V${major}.${minor}"
+            echo "GPT OSS ${size}B"
         fi
-    elif [[ "$name" =~ deepseek-v([0-9])\.([0-9]) ]]; then
-        echo "DeepSeek V${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-
-    # Handle Qwen models
-    elif [[ "$name" =~ qwen/qwen([0-9])-(next-)?([0-9]+)b ]]; then
-        local version="${BASH_REMATCH[1]}"
-        local next="${BASH_REMATCH[2]}"
-        local size="${BASH_REMATCH[3]}"
-        if [ -n "$next" ]; then
-            echo "Qwen${version} Next ${size}B"
-        else
-            echo "Qwen${version} ${size}B"
-        fi
-    elif [[ "$name" =~ alibaba-qwen([0-9])-(coder-)?([0-9]+)b ]]; then
-        local version="${BASH_REMATCH[1]}"
-        local coder="${BASH_REMATCH[2]}"
-        local size="${BASH_REMATCH[3]}"
-        if [ -n "$coder" ]; then
-            echo "Qwen${version} Coder ${size}B"
-        else
-            echo "Qwen${version} ${size}B"
-        fi
-
-    # Handle OpenAI variants
     elif [[ "$name" =~ openai/gpt-oss-([0-9]+)b ]]; then
         echo "GPT OSS ${BASH_REMATCH[1]}B"
     elif [[ "$name" =~ openai-gpt-oss-([0-9]+)b ]]; then
         echo "GPT OSS ${BASH_REMATCH[1]}B"
 
-    # Handle GLM models
-    elif [[ "$name" =~ z-ai/glm-([0-9])\.([0-9])-air ]]; then
-        echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} Air"
+    # Handle T-Stars models
+    elif [[ "$name" =~ tstars([0-9])\.([0-9]) ]]; then
+        echo "T-Stars ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
 
     # Handle Kwai models
     elif [[ "$name" =~ kwaipilot/kat-coder-pro ]]; then
         echo "KAT Coder Pro"
+
+    # Handle generic vision models
+    elif [[ "$name" =~ vision-model ]]; then
+        echo "Vision Model"
 
     else
         echo "$name"
