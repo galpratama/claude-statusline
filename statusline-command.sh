@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Claude Code Statusline Script - Refactored Edition
+# Claude Code Statusline Script - Refactored Edition v2.1 (FIXED)
 # Performance optimizations:
 # - Configuration-based segment toggling
 # - Caching system for expensive operations (git, servers, language detection)
@@ -82,15 +82,26 @@ json_file_get() {
 # Format number in k/M notation with two decimal places
 format_k() {
     local num=$1
+
+    # Handle empty or non-numeric values
+    if [ -z "$num" ] || ! [[ "$num" =~ ^[0-9]+$ ]]; then
+        echo "0"
+        return
+    fi
+
     if [ "$num" -ge 1000000 ]; then
+        # Use awk instead of bc for better reliability
         local millions
-        millions=$(echo "scale=2; $num / 1000000" | bc 2>/dev/null || echo "0")
-        millions=$(echo "$millions" | sed 's/\.00$//' | sed 's/0$//' | sed 's/\.$//')
+        millions=$(awk -v n="$num" 'BEGIN { printf "%.2f", n/1000000 }')
+        # Remove trailing zeros and decimal point if needed
+        millions=$(echo "$millions" | sed 's/\.00$//' | sed 's/\([0-9]\)0$/\1/' | sed 's/\.$//')
         echo "${millions}M"
     elif [ "$num" -ge 1000 ]; then
+        # Use awk instead of bc for better reliability
         local thousands
-        thousands=$(echo "scale=2; $num / 1000" | bc 2>/dev/null || echo "0")
-        thousands=$(echo "$thousands" | sed 's/\.00$//' | sed 's/0$//' | sed 's/\.$//')
+        thousands=$(awk -v n="$num" 'BEGIN { printf "%.2f", n/1000 }')
+        # Remove trailing zeros and decimal point if needed
+        thousands=$(echo "$thousands" | sed 's/\.00$//' | sed 's/\([0-9]\)0$/\1/' | sed 's/\.$//')
         echo "${thousands}k"
     else
         echo "$num"
@@ -832,6 +843,11 @@ main() {
     context_size=$(json_get "$input" '.context_window.context_window_size' "0")
     session_id=$(json_get "$input" '.session_id' "")
 
+    # Ensure numeric values are valid
+    [[ ! "$total_input" =~ ^[0-9]+$ ]] && total_input=0
+    [[ ! "$total_output" =~ ^[0-9]+$ ]] && total_output=0
+    [[ ! "$context_size" =~ ^[0-9]+$ ]] && context_size=0
+
     # Extract cost and metrics
     local json_cost json_duration lines_added lines_removed
     json_cost=$(json_get "$input" '.cost.total_cost_usd' "")
@@ -872,13 +888,15 @@ main() {
     prev_total=$(cat "$session_metrics" 2>/dev/null || echo "0")
     current_total=$((total_input + total_output))
 
-    if [ "$current_total" -gt "$prev_total" ] && [ "$prev_total" -gt 0 ]; then
-        message_count=$(cat "$message_count_file" 2>/dev/null || echo "0")
+    # Always read current message count
+    message_count=$(cat "$message_count_file" 2>/dev/null || echo "0")
+
+    # Increment if tokens increased (including first real message after init)
+    if [ "$current_total" -gt "$prev_total" ]; then
         message_count=$((message_count + 1))
         echo "$message_count" > "$message_count_file"
-    else
-        message_count=$(cat "$message_count_file" 2>/dev/null || echo "0")
     fi
+
     echo "$current_total" > "$session_metrics"
 
     # Session statistics
@@ -973,11 +991,22 @@ main() {
     # Line 1: Cost info
     printf "  💰"
     printf " ${C_YELLOW}%s${C_RESET}" "$final_cost_display"
+    # Temporary marker to confirm version
+    printf " ${C_GRAY}[v2.1]${C_RESET}"
     printf " · %s · %s" "$provider_section" "$model"
     printf " · %s" "$duration"
+    # Debug: Log values to a file to see what's happening
+    echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> /tmp/statusline-debug.log
+    echo "DEBUG: total_input='$total_input' total_output='$total_output'" >> /tmp/statusline-debug.log
+    echo "DEBUG: formatted_input='$(format_k "$total_input")' formatted_output='$(format_k "$total_output")'" >> /tmp/statusline-debug.log
+    echo "DEBUG: Input JSON:" >> /tmp/statusline-debug.log
+    echo "$input" >> /tmp/statusline-debug.log
+    echo "" >> /tmp/statusline-debug.log
+
     printf " · ${C_CYAN}↑ %s${C_RESET} · ${C_PURPLE}↓ %s${C_RESET}" "$(format_k "$total_input")" "$(format_k "$total_output")"
 
-    [ "$message_count" -gt 0 ] && printf " · ${C_CYAN}%d msg${C_RESET}" "$message_count"
+    # Always show message count
+    printf " · ${C_CYAN}%d msg${C_RESET}" "$message_count"
 
     # Lines changed
     if [ "$lines_added" -gt 0 ] || [ "$lines_removed" -gt 0 ]; then
