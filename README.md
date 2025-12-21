@@ -2,6 +2,11 @@
 
 Custom statusline for Claude Code that displays AI model information, costs, git status, and development environment details.
 
+To install, just tell Claude Code: 
+```
+Please configure it for me: https://github.com/galpratama/claude-statusline
+```
+
 ![Demo](demo.png)
 
 ## Quick Install
