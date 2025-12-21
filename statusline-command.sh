@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Claude Code Statusline Script - Refactored Edition v2.1 (FIXED)
+# Claude Code Statusline Script
 # Performance optimizations:
 # - Configuration-based segment toggling
 # - Caching system for expensive operations (git, servers, language detection)
@@ -991,18 +991,9 @@ main() {
     # Line 1: Cost info
     printf "  💰"
     printf " ${C_YELLOW}%s${C_RESET}" "$final_cost_display"
-    # Temporary marker to confirm version
-    printf " ${C_GRAY}[v2.1]${C_RESET}"
     printf " · %s · %s" "$provider_section" "$model"
     printf " · %s" "$duration"
-    # Debug: Log values to a file to see what's happening
-    echo "=== $(date '+%Y-%m-%d %H:%M:%S') ===" >> /tmp/statusline-debug.log
-    echo "DEBUG: total_input='$total_input' total_output='$total_output'" >> /tmp/statusline-debug.log
-    echo "DEBUG: formatted_input='$(format_k "$total_input")' formatted_output='$(format_k "$total_output")'" >> /tmp/statusline-debug.log
-    echo "DEBUG: Input JSON:" >> /tmp/statusline-debug.log
-    echo "$input" >> /tmp/statusline-debug.log
-    echo "" >> /tmp/statusline-debug.log
-
+   
     printf " · ${C_CYAN}↑ %s${C_RESET} · ${C_PURPLE}↓ %s${C_RESET}" "$(format_k "$total_input")" "$(format_k "$total_output")"
 
     # Always show message count
