@@ -210,6 +210,12 @@ load_config() {
 format_model_name() {
     local name="$1"
 
+    # Check for :free suffix before stripping
+    local is_free=false
+    if [[ "$name" == *":free" ]]; then
+        is_free=true
+    fi
+
     # Strip provider prefix and :free/:exacto suffixes first
     local clean_name="$name"
     if [[ "$clean_name" =~ ^[^/]+/(.+)$ ]]; then
@@ -579,7 +585,12 @@ format_model_name() {
     # Fallback: return original name (strip provider prefix already done)
     else
         echo "$clean_name"
-    fi
+    fi | {
+        # Post-process to add free emoji if needed
+        read -r result
+        [ "$is_free" = true ] && result+=" 🆓"
+        echo "$result"
+    }
 }
 
 # ============================================================================
