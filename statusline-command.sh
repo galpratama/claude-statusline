@@ -574,9 +574,242 @@ format_model_name() {
     elif [[ "$clean_name" =~ tstars([0-9])\.([0-9]) ]]; then
         echo "T-Stars ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
 
-    # Handle Kwai models
+    # Handle Kwai/Kwaipilot KAT models
     elif [[ "$clean_name" =~ kat-coder-pro ]]; then
         echo "KAT Coder Pro"
+    elif [[ "$clean_name" =~ kat-coder ]]; then
+        echo "KAT Coder"
+
+    # Handle ByteDance Seed models
+    elif [[ "$clean_name" =~ seed-([0-9]+\.[0-9]+) ]]; then
+        echo "Seed ${BASH_REMATCH[1]}"
+    elif [[ "$clean_name" =~ ui-tars ]]; then
+        echo "UI-TARS"
+
+    # Handle AllenAI Olmo models
+    elif [[ "$clean_name" =~ olmo-([0-9])-([0-9]+)b ]]; then
+        echo "Olmo ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}B"
+
+    # Handle Xiaomi MiMo models
+    elif [[ "$clean_name" =~ mimo(-[0-9]+b)? ]]; then
+        local size="${BASH_REMATCH[1]}"
+        if [ -n "$size" ]; then
+            echo "MiMo ${size#-}"
+        else
+            echo "MiMo"
+        fi
+
+    # Handle NVIDIA Nemotron models
+    elif [[ "$clean_name" =~ nemotron-([0-9]+)-([0-9]+)b ]]; then
+        echo "Nemotron ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}B"
+    elif [[ "$clean_name" =~ nemotron-nano ]]; then
+        echo "Nemotron Nano"
+
+    # Handle Relace models
+    elif [[ "$clean_name" =~ relace-search ]]; then
+        echo "Relace Search"
+    elif [[ "$clean_name" =~ relace-apply ]]; then
+        echo "Relace Apply"
+
+    # Handle EssentialAI Rnj models
+    elif [[ "$clean_name" =~ rnj-([0-9]+)b ]]; then
+        echo "Rnj ${BASH_REMATCH[1]}B"
+
+    # Handle Prime Intellect INTELLECT models
+    elif [[ "$clean_name" =~ intellect-([0-9]+) ]]; then
+        echo "INTELLECT-${BASH_REMATCH[1]}"
+
+    # Handle TNG Tech R1T Chimera models
+    elif [[ "$clean_name" =~ r1t2-chimera ]]; then
+        echo "R1T2 Chimera"
+    elif [[ "$clean_name" =~ r1t-chimera ]]; then
+        echo "R1T Chimera"
+
+    # Handle Deep Cogito models
+    elif [[ "$clean_name" =~ cogito-v([0-9]+\.[0-9]+) ]]; then
+        echo "Cogito V${BASH_REMATCH[1]}"
+
+    # Handle StepFun Step models
+    elif [[ "$clean_name" =~ step-?([0-9]+) ]]; then
+        echo "Step ${BASH_REMATCH[1]}"
+
+    # Handle Meituan LongCat models
+    elif [[ "$clean_name" =~ longcat ]]; then
+        echo "LongCat"
+
+    # Handle OpenGVLab InternVL models
+    elif [[ "$clean_name" =~ internvl-?([0-9]+) ]]; then
+        echo "InternVL ${BASH_REMATCH[1]}"
+    elif [[ "$clean_name" =~ internvl ]]; then
+        echo "InternVL"
+
+    # Handle THUDM GLM Vision models
+    elif [[ "$clean_name" =~ glm-([0-9])\\.([0-9])v ]]; then
+        echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}V"
+
+    # Handle Tencent Hunyuan models
+    elif [[ "$clean_name" =~ hunyuan(-[0-9]+b)? ]]; then
+        local size="${BASH_REMATCH[1]}"
+        if [ -n "$size" ]; then
+            echo "Hunyuan ${size#-}"
+        else
+            echo "Hunyuan"
+        fi
+
+    # Handle Morph models
+    elif [[ "$clean_name" =~ morph-v([0-9]+) ]]; then
+        echo "Morph V${BASH_REMATCH[1]}"
+
+    # Handle Baidu ERNIE models
+    elif [[ "$clean_name" =~ ernie-([0-9]+\.[0-9]+)(-turbo)? ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local turbo="${BASH_REMATCH[2]}"
+        local display="ERNIE ${version}"
+        [ -n "$turbo" ] && display+=" Turbo"
+        echo "$display"
+
+    # Handle Inception Mercury models
+    elif [[ "$clean_name" =~ mercury-coder ]]; then
+        echo "Mercury Coder"
+    elif [[ "$clean_name" =~ mercury ]]; then
+        echo "Mercury"
+
+    # Handle Cohere Command models
+    elif [[ "$clean_name" =~ command-a ]]; then
+        echo "Command A"
+    elif [[ "$clean_name" =~ command-r\+ ]]; then
+        echo "Command R+"
+    elif [[ "$clean_name" =~ command-r ]]; then
+        echo "Command R"
+
+    # Handle AionLabs models
+    elif [[ "$clean_name" =~ aion-([0-9]+\.[0-9]+) ]]; then
+        echo "Aion ${BASH_REMATCH[1]}"
+
+    # Handle Inflection models
+    elif [[ "$clean_name" =~ inflection-([0-9]+) ]]; then
+        echo "Inflection ${BASH_REMATCH[1]}"
+
+    # Handle TheDrummer models
+    elif [[ "$clean_name" =~ cydonia ]]; then
+        echo "Cydonia"
+    elif [[ "$clean_name" =~ skyfall ]]; then
+        echo "Skyfall"
+    elif [[ "$clean_name" =~ unslopnemo ]]; then
+        echo "UnslopNemo"
+    elif [[ "$clean_name" =~ rocinante ]]; then
+        echo "Rocinante"
+
+    # Handle NeverSleep models
+    elif [[ "$clean_name" =~ lumimaid ]]; then
+        echo "Lumimaid"
+    elif [[ "$clean_name" =~ noromaid ]]; then
+        echo "Noromaid"
+
+    # Handle Sao10K models
+    elif [[ "$clean_name" =~ euryale ]]; then
+        echo "Euryale"
+    elif [[ "$clean_name" =~ hanami ]]; then
+        echo "Hanami"
+    elif [[ "$clean_name" =~ lunaris ]]; then
+        echo "Lunaris"
+
+    # Handle Anthracite Magnum models
+    elif [[ "$clean_name" =~ magnum(-[0-9]+b)? ]]; then
+        local size="${BASH_REMATCH[1]}"
+        if [ -n "$size" ]; then
+            echo "Magnum ${size#-}"
+        else
+            echo "Magnum"
+        fi
+
+    # Handle Liquid LFM models
+    elif [[ "$clean_name" =~ lfm-?([0-9]+)b? ]]; then
+        echo "LFM ${BASH_REMATCH[1]}"
+    elif [[ "$clean_name" =~ lfm ]]; then
+        echo "LFM"
+
+    # Handle IBM Granite models
+    elif [[ "$clean_name" =~ granite-([0-9]+\.[0-9]+) ]]; then
+        echo "Granite ${BASH_REMATCH[1]}"
+
+    # Handle AI21 Jamba models
+    elif [[ "$clean_name" =~ jamba-([0-9]+\.[0-9]+)(-instruct|-turbo)? ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local variant="${BASH_REMATCH[2]}"
+        local display="Jamba ${version}"
+        if [ "$variant" = "-instruct" ]; then
+            display+=" Instruct"
+        elif [ "$variant" = "-turbo" ]; then
+            display+=" Turbo"
+        fi
+        echo "$display"
+
+    # Handle Arcee AI models
+    elif [[ "$clean_name" =~ arcee-trinity ]]; then
+        echo "Trinity"
+    elif [[ "$clean_name" =~ arcee-spotlight ]]; then
+        echo "Spotlight"
+    elif [[ "$clean_name" =~ arcee-maestro ]]; then
+        echo "Maestro"
+    elif [[ "$clean_name" =~ arcee-virtuoso ]]; then
+        echo "Virtuoso"
+    elif [[ "$clean_name" =~ arcee-coder ]]; then
+        echo "Coder"
+
+    # Handle Switchpoint Router
+    elif [[ "$clean_name" =~ switchpoint-router ]]; then
+        echo "Switchpoint Router"
+
+    # Handle Perplexity Sonar models
+    elif [[ "$clean_name" =~ sonar-deep-research ]]; then
+        echo "Sonar Deep Research"
+    elif [[ "$clean_name" =~ sonar-reasoning ]]; then
+        echo "Sonar Reasoning"
+    elif [[ "$clean_name" =~ sonar-pro ]]; then
+        echo "Sonar Pro"
+    elif [[ "$clean_name" =~ sonar ]]; then
+        echo "Sonar"
+
+    # Handle Mancer Weaver models
+    elif [[ "$clean_name" =~ weaver ]]; then
+        echo "Weaver"
+
+    # Handle Gryphe MythoMax models
+    elif [[ "$clean_name" =~ mythomax ]]; then
+        echo "MythoMax"
+
+    # Handle Alpindale Goliath models
+    elif [[ "$clean_name" =~ goliath ]]; then
+        echo "Goliath"
+
+    # Handle OpenRouter special routers
+    elif [[ "$clean_name" =~ auto-router ]]; then
+        echo "Auto Router"
+    elif [[ "$clean_name" =~ body-builder ]]; then
+        echo "Body Builder"
+
+    # Strip common suffixes (beta, alpha, version numbers, dates)
+    # This should come near the end before fallback
+    elif [[ "$clean_name" =~ ^(.+)-(beta|alpha|preview)$ ]]; then
+        local base="${BASH_REMATCH[1]}"
+        local suffix="${BASH_REMATCH[2]}"
+        # Capitalize first letter
+        suffix="$(echo ${suffix:0:1} | tr '[:lower:]' '[:upper:]')${suffix:1}"
+        # Try to format the base name nicely
+        base=$(echo "$base" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
+        echo "$base $suffix"
+    elif [[ "$clean_name" =~ ^(.+)-v([0-9]+\.[0-9]+)$ ]]; then
+        local base="${BASH_REMATCH[1]}"
+        local version="${BASH_REMATCH[2]}"
+        base=$(echo "$base" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
+        echo "$base v${version}"
+    elif [[ "$clean_name" =~ ^(.+)-([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]]; then
+        # Strip date suffix like 2024-11-20
+        echo "${BASH_REMATCH[1]}" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1'
+    elif [[ "$clean_name" =~ ^(.+)-([0-9]{2}-[0-9]{4})$ ]]; then
+        # Strip date suffix like 08-2024
+        echo "${BASH_REMATCH[1]}" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1'
 
     # Handle generic vision models
     elif [[ "$clean_name" =~ vision-model ]]; then
