@@ -230,7 +230,11 @@ format_model_name() {
         local minor="${BASH_REMATCH[3]}"
         local mode="${BASH_REMATCH[4]}"
         tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
-        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        if [ "$mode" = "thinking" ]; then
+            mode="💡"
+        else
+            mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        fi
         echo "${tier} ${major}.${minor} ${mode}"
 
     # Handle Claude 3.x models with version dates (e.g., claude-3-5-sonnet-20241022)
@@ -1026,6 +1030,12 @@ main() {
     lines_added=$(json_get "$input" '.cost.total_lines_added' "0")
     lines_removed=$(json_get "$input" '.cost.total_lines_removed' "0")
 
+    # Extract current usage context window data
+    local current_input current_cache_creation current_cache_read
+    current_input=$(json_get "$input" '.context_window.current_usage.input_tokens' "0")
+    current_cache_creation=$(json_get "$input" '.context_window.current_usage.cache_creation_input_tokens' "0")
+    current_cache_read=$(json_get "$input" '.context_window.current_usage.cache_read_input_tokens' "0")
+
     # Extract MCP and tools info
     local mcp_servers_count tools_count
     mcp_servers_count=$(echo "$input" | jq -r '.mcp_servers // [] | length' 2>/dev/null || echo "0")
@@ -1109,6 +1119,29 @@ main() {
     cache_total=$((cache_creation_tokens + cache_read_tokens))
     [ "$cache_total" -gt 0 ] && [ "$total_input" -gt 0 ] && cache_efficiency=$((cache_read_tokens * 100 / total_input))
 
+    # Calculate context window usage percentage
+    local context_usage_pct=0 context_usage_color="${C_GREEN}"
+    if [ "$context_size" -gt 0 ]; then
+        # Ensure numeric values
+        [[ ! "$current_input" =~ ^[0-9]+$ ]] && current_input=0
+        [[ ! "$current_cache_creation" =~ ^[0-9]+$ ]] && current_cache_creation=0
+        [[ ! "$current_cache_read" =~ ^[0-9]+$ ]] && current_cache_read=0
+
+        local current_total_tokens=$((current_input + current_cache_creation + current_cache_read))
+        if [ "$current_total_tokens" -gt 0 ]; then
+            context_usage_pct=$((current_total_tokens * 100 / context_size))
+
+            # Color based on usage
+            if [ "$context_usage_pct" -ge 90 ]; then
+                context_usage_color="${C_RED}"
+            elif [ "$context_usage_pct" -ge 70 ]; then
+                context_usage_color="${C_YELLOW}"
+            else
+                context_usage_color="${C_GREEN}"
+            fi
+        fi
+    fi
+
     # Git info
     local git_info git_metrics last_commit_time commits_today
     git_info=$(get_git_info "$current_dir")
@@ -1164,8 +1197,13 @@ main() {
     printf " ${C_YELLOW}%s${C_RESET}" "$final_cost_display"
     printf " · %s · %s" "$provider_section" "$model"
     printf " · %s" "$duration"
-   
+
     printf " · ${C_CYAN}↑ %s${C_RESET} · ${C_PURPLE}↓ %s${C_RESET}" "$(format_k "$total_input")" "$(format_k "$total_output")"
+
+    # Context window usage
+    if [ "$context_usage_pct" -gt 0 ]; then
+        printf " · ${context_usage_color}%d%% ctx${C_RESET}" "$context_usage_pct"
+    fi
 
     # Always show message count
     printf " · ${C_CYAN}%d msg${C_RESET}" "$message_count"
