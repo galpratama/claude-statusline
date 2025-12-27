@@ -210,8 +210,16 @@ load_config() {
 format_model_name() {
     local name="$1"
 
+    # Strip provider prefix and :free/:exacto suffixes first
+    local clean_name="$name"
+    if [[ "$clean_name" =~ ^[^/]+/(.+)$ ]]; then
+        clean_name="${BASH_REMATCH[1]}"
+    fi
+    clean_name="${clean_name%:free}"
+    clean_name="${clean_name%:exacto}"
+
     # Handle Kiro AWS proxy models
-    if [[ "$name" =~ kiro-claude-(opus|sonnet|haiku)-([0-9])-([0-9])(-agentic)? ]]; then
+    if [[ "$clean_name" =~ kiro-claude-(opus|sonnet|haiku)-([0-9])-([0-9])(-agentic)? ]]; then
         local tier="${BASH_REMATCH[1]}"
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
@@ -224,7 +232,7 @@ format_model_name() {
         fi
 
     # Handle Antigravity/Gemini proxy models for Claude
-    elif [[ "$name" =~ gemini-claude-(opus|sonnet|haiku)-([0-9])-([0-9])-(thinking|extended) ]]; then
+    elif [[ "$clean_name" =~ gemini-claude-(opus|sonnet|haiku)-([0-9])-([0-9])-(thinking|extended) ]]; then
         local tier="${BASH_REMATCH[1]}"
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
@@ -238,7 +246,7 @@ format_model_name() {
         echo "${tier} ${major}.${minor} ${mode}"
 
     # Handle Claude 3.x models with version dates (e.g., claude-3-5-sonnet-20241022)
-    elif [[ "$name" =~ claude-([0-9])-([0-9])-(opus|sonnet|haiku)-[0-9]{8} ]]; then
+    elif [[ "$clean_name" =~ claude-([0-9])-([0-9])-(opus|sonnet|haiku)-[0-9]{8} ]]; then
         local major="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local tier="${BASH_REMATCH[3]}"
@@ -246,7 +254,7 @@ format_model_name() {
         echo "${tier} ${major}.${minor}"
 
     # Handle standard Claude model names with version dates
-    elif [[ "$name" =~ claude-(opus|sonnet|haiku)-([0-9])-([0-9])-[0-9]{8} ]]; then
+    elif [[ "$clean_name" =~ claude-(opus|sonnet|haiku)-([0-9])-([0-9])-[0-9]{8} ]]; then
         local tier="${BASH_REMATCH[1]}"
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
@@ -254,7 +262,7 @@ format_model_name() {
         echo "${tier} ${major}.${minor}"
 
     # Handle standard Claude model names
-    elif [[ "$name" =~ claude-(opus|sonnet|haiku)-([0-9])\.?([0-9])?-?[0-9]* ]]; then
+    elif [[ "$clean_name" =~ claude-(opus|sonnet|haiku)-([0-9])\.?([0-9])?-?[0-9]* ]]; then
         local tier="${BASH_REMATCH[1]}"
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
@@ -268,15 +276,31 @@ format_model_name() {
         fi
 
     # Handle Claude display names
-    elif [[ "$name" =~ ^Claude\ (Opus|Sonnet|Haiku)\ ([0-9]\.?[0-9]?) ]]; then
+    elif [[ "$clean_name" =~ ^Claude\ (Opus|Sonnet|Haiku)\ ([0-9]\.?[0-9]?) ]]; then
         echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
 
     # Handle simple format like "Sonnet 4"
-    elif [[ "$name" =~ ^(Opus|Sonnet|Haiku)\ 4$ ]]; then
+    elif [[ "$clean_name" =~ ^(Opus|Sonnet|Haiku)\ 4$ ]]; then
         echo "${BASH_REMATCH[1]} 4.5"
 
+    # Handle OpenAI o4 family (must come before GPT-5)
+    elif [[ "$clean_name" =~ ^o4(-mini|-preview)?$ ]]; then
+        local variant="${BASH_REMATCH[1]}"
+        local display="o4"
+        if [ "$variant" = "-mini" ]; then
+            display+=" Mini"
+        elif [ "$variant" = "-preview" ]; then
+            display+=" Preview"
+        fi
+        echo "$display"
+
+    # Handle OpenAI o3 family
+    elif [[ "$clean_name" =~ ^o3(-mini)?$ ]]; then
+        local variant="${BASH_REMATCH[1]}"
+        [ "$variant" = "-mini" ] && echo "o3 Mini" || echo "o3"
+
     # Handle OpenAI GPT-5 family
-    elif [[ "$name" =~ gpt-5\.([0-9])(-codex)?(-mini|-max|-nano)? ]]; then
+    elif [[ "$clean_name" =~ gpt-5\.([0-9])(-codex)?(-mini|-max|-nano)? ]]; then
         local minor="${BASH_REMATCH[1]}"
         local codex="${BASH_REMATCH[2]}"
         local variant="${BASH_REMATCH[3]}"
@@ -290,7 +314,7 @@ format_model_name() {
             display+=" Nano"
         fi
         echo "$display"
-    elif [[ "$name" =~ gpt-5(-codex)?(-mini|-nano)? ]]; then
+    elif [[ "$clean_name" =~ gpt-5(-codex)?(-mini|-nano)? ]]; then
         local codex="${BASH_REMATCH[1]}"
         local variant="${BASH_REMATCH[2]}"
         local display="GPT-5"
@@ -299,8 +323,38 @@ format_model_name() {
         [ "$variant" = "-nano" ] && display+=" Nano"
         echo "$display"
 
+    # Handle OpenAI GPT-4 family with various suffixes
+    elif [[ "$clean_name" =~ ^gpt-4o(-mini|-2024-[0-9]{2}-[0-9]{2})?$ ]]; then
+        local suffix="${BASH_REMATCH[1]}"
+        [ "$suffix" = "-mini" ] && echo "GPT-4o Mini" || echo "GPT-4o"
+    elif [[ "$clean_name" =~ ^gpt-4(-turbo|-vision|-32k)?$ ]]; then
+        local variant="${BASH_REMATCH[1]}"
+        local display="GPT-4"
+        if [ "$variant" = "-turbo" ]; then
+            display+=" Turbo"
+        elif [ "$variant" = "-vision" ]; then
+            display+=" Vision"
+        elif [ "$variant" = "-32k" ]; then
+            display+=" 32K"
+        fi
+        echo "$display"
+
+    # Handle xAI Grok family
+    elif [[ "$clean_name" =~ ^grok-([0-9])(-mini|-vision)?(-thinking)?$ ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local variant="${BASH_REMATCH[2]}"
+        local thinking="${BASH_REMATCH[3]}"
+        local display="Grok ${version}"
+        if [ "$variant" = "-mini" ]; then
+            display+=" Mini"
+        elif [ "$variant" = "-vision" ]; then
+            display+=" Vision"
+        fi
+        [ -n "$thinking" ] && display+=" 💡"
+        echo "$display"
+
     # Handle Gemini 3.x models
-    elif [[ "$name" =~ gemini-3-(pro|flash)(-image)?-preview ]]; then
+    elif [[ "$clean_name" =~ gemini-3-(pro|flash)(-image)?-preview ]]; then
         local tier="${BASH_REMATCH[1]}"
         local image="${BASH_REMATCH[2]}"
         tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
@@ -311,12 +365,12 @@ format_model_name() {
         fi
 
     # Handle Gemini 2.x computer-use without tier (e.g., gemini-2.5-computer-use-preview-10-2025)
-    elif [[ "$name" =~ gemini-2\.([0-9])-computer-use-preview(-[0-9]+-[0-9]+)? ]]; then
+    elif [[ "$clean_name" =~ gemini-2\.([0-9])-computer-use-preview(-[0-9]+-[0-9]+)? ]]; then
         local minor="${BASH_REMATCH[1]}"
         echo "Gemini 2.${minor} Computer"
 
     # Handle Gemini 2.x models with computer-use mode and tier (with or without date suffix)
-    elif [[ "$name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)?-computer-use-preview(-[0-9]+-[0-9]+)? ]]; then
+    elif [[ "$clean_name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)?-computer-use-preview(-[0-9]+-[0-9]+)? ]]; then
         local minor="${BASH_REMATCH[1]}"
         local tier="${BASH_REMATCH[2]}"
         local lite="${BASH_REMATCH[3]}"
@@ -325,7 +379,7 @@ format_model_name() {
         [ -n "$lite" ] && display+=" Lite"
         display+=" Computer"
         echo "$display"
-    elif [[ "$name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)?-preview ]]; then
+    elif [[ "$clean_name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)?-preview ]]; then
         local minor="${BASH_REMATCH[1]}"
         local tier="${BASH_REMATCH[2]}"
         local lite="${BASH_REMATCH[3]}"
@@ -335,7 +389,7 @@ format_model_name() {
         echo "$display"
 
     # Handle standard Gemini 2.x models
-    elif [[ "$name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)? ]]; then
+    elif [[ "$clean_name" =~ gemini-2\.([0-9])-(pro|flash)(-lite)? ]]; then
         local minor="${BASH_REMATCH[1]}"
         local tier="${BASH_REMATCH[2]}"
         local lite="${BASH_REMATCH[3]}"
@@ -344,19 +398,27 @@ format_model_name() {
         [ -n "$lite" ] && display+=" Lite"
         echo "$display"
 
+    # Handle Qwen QwQ models (thinking models)
+    elif [[ "$clean_name" =~ ^qwq-([0-9]+)b(-preview)?$ ]]; then
+        local size="${BASH_REMATCH[1]}"
+        local preview="${BASH_REMATCH[2]}"
+        local display="QwQ ${size}B"
+        [ -n "$preview" ] && display+=" Preview"
+        echo "$display"
+
     # Handle Qwen3 models with thinking/instruct modes
-    elif [[ "$name" =~ qwen3-([0-9]+)b-a22b-(thinking|instruct)(-[0-9]+)? ]]; then
+    elif [[ "$clean_name" =~ qwen3-([0-9]+)b-a22b-(thinking|instruct)(-[0-9]+)? ]]; then
         local size="${BASH_REMATCH[1]}"
         local mode="${BASH_REMATCH[2]}"
         mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
         echo "Qwen3 ${size}B ${mode}"
 
     # Handle Qwen3 VL Plus specifically (must come before generic pattern)
-    elif [[ "$name" =~ qwen3-vl-plus ]]; then
+    elif [[ "$clean_name" =~ qwen3-vl-plus ]]; then
         echo "Qwen3 VL Plus"
 
     # Handle Qwen3 specialized variants
-    elif [[ "$name" =~ qwen3-(coder|max)-(flash|plus|preview) ]]; then
+    elif [[ "$clean_name" =~ qwen3-(coder|max)-(flash|plus|preview) ]]; then
         local type="${BASH_REMATCH[1]}"
         local variant="${BASH_REMATCH[2]}"
         type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
@@ -364,15 +426,15 @@ format_model_name() {
         echo "Qwen3 ${type} ${variant}"
 
     # Handle Qwen3 simple variants (max only, since vl-plus handled above)
-    elif [[ "$name" =~ qwen3-max ]]; then
+    elif [[ "$clean_name" =~ qwen3-max ]]; then
         echo "Qwen3 Max"
 
     # Handle Qwen3 size-based models
-    elif [[ "$name" =~ qwen3-([0-9]+)b ]]; then
+    elif [[ "$clean_name" =~ qwen3-([0-9]+)b ]]; then
         echo "Qwen3 ${BASH_REMATCH[1]}B"
 
     # Handle older Qwen models
-    elif [[ "$name" =~ qwen/qwen([0-9])-(next-)?([0-9]+)b ]]; then
+    elif [[ "$clean_name" =~ qwen([0-9])-(next-)?([0-9]+)b ]]; then
         local version="${BASH_REMATCH[1]}"
         local next="${BASH_REMATCH[2]}"
         local size="${BASH_REMATCH[3]}"
@@ -381,7 +443,7 @@ format_model_name() {
         else
             echo "Qwen${version} ${size}B"
         fi
-    elif [[ "$name" =~ alibaba-qwen([0-9])-(coder-)?([0-9]+)b ]]; then
+    elif [[ "$clean_name" =~ alibaba-qwen([0-9])-(coder-)?([0-9]+)b ]]; then
         local version="${BASH_REMATCH[1]}"
         local coder="${BASH_REMATCH[2]}"
         local size="${BASH_REMATCH[3]}"
@@ -392,20 +454,20 @@ format_model_name() {
         fi
 
     # Handle Kimi/Moonshot K2 models
-    elif [[ "$name" =~ kimi-k2-(thinking|instruct)(-[0-9]+)? ]]; then
+    elif [[ "$clean_name" =~ kimi-k2-(thinking|instruct)(-[0-9]+)? ]]; then
         local mode="${BASH_REMATCH[1]}"
         mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
         echo "Kimi K2 ${mode}"
-    elif [[ "$name" =~ kimi-k2 ]]; then
+    elif [[ "$clean_name" =~ kimi-k2 ]]; then
         echo "Kimi K2"
-    elif [[ "$name" =~ moonshotai/kimi-k([0-9])-(thinking|instruct)(-[0-9]+)? ]]; then
+    elif [[ "$clean_name" =~ kimi-k([0-9])-(thinking|instruct)(-[0-9]+)? ]]; then
         local version="${BASH_REMATCH[1]}"
         local mode="${BASH_REMATCH[2]}"
         mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
         echo "Kimi K${version} ${mode}"
 
     # Handle DeepSeek V3.x models
-    elif [[ "$name" =~ deepseek-v([0-9])\.([0-9])-(chat|reasoner) ]]; then
+    elif [[ "$clean_name" =~ deepseek-v([0-9])\.([0-9])-(chat|reasoner) ]]; then
         local major="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local mode="${BASH_REMATCH[3]}"
@@ -413,7 +475,7 @@ format_model_name() {
         echo "DeepSeek V${major}.${minor} ${mode}"
 
     # Handle DeepSeek R1 and distill models
-    elif [[ "$name" =~ deepseek-r([0-9])(-distill-llama-([0-9]+)b)? ]]; then
+    elif [[ "$clean_name" =~ deepseek-r([0-9])(-distill-llama-([0-9]+)b)? ]]; then
         local version="${BASH_REMATCH[1]}"
         local distill="${BASH_REMATCH[2]}"
         local size="${BASH_REMATCH[3]}"
@@ -424,7 +486,7 @@ format_model_name() {
         fi
 
     # Handle DeepSeek versioned models
-    elif [[ "$name" =~ deepseek-ai/deepseek-v([0-9])\.([0-9])-(terminus)? ]]; then
+    elif [[ "$clean_name" =~ deepseek-v([0-9])\.([0-9])-(terminus)? ]]; then
         local major="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local variant="${BASH_REMATCH[3]}"
@@ -433,33 +495,51 @@ format_model_name() {
         else
             echo "DeepSeek V${major}.${minor}"
         fi
-    elif [[ "$name" =~ deepseek-v([0-9])\.([0-9]) ]]; then
+    elif [[ "$clean_name" =~ deepseek-v([0-9])\.([0-9]) ]]; then
         echo "DeepSeek V${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-    elif [[ "$name" =~ deepseek-v([0-9])$ ]]; then
+    elif [[ "$clean_name" =~ deepseek-v([0-9])$ ]]; then
         echo "DeepSeek V${BASH_REMATCH[1]}"
 
     # Handle GLM models
-    elif [[ "$name" =~ glm-([0-9])\.([0-9]) ]]; then
+    elif [[ "$clean_name" =~ glm-([0-9])\.([0-9]) ]]; then
         echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
-    elif [[ "$name" =~ z-ai/glm-([0-9])\.([0-9])-air ]]; then
+    elif [[ "$clean_name" =~ glm-([0-9])\.([0-9])-air ]]; then
         echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} Air"
 
     # Handle MiniMax models
-    elif [[ "$name" =~ minimax-m([0-9]) ]]; then
-        echo "MiniMax M${BASH_REMATCH[1]}"
-    elif [[ "$name" =~ minimaxai/minimax-m([0-9]) ]]; then
+    elif [[ "$clean_name" =~ minimax-m([0-9]) ]]; then
         echo "MiniMax M${BASH_REMATCH[1]}"
 
     # Handle Mistral models
-    elif [[ "$name" =~ mistralai/mistral-nemotron ]]; then
+    elif [[ "$clean_name" =~ ^mistral-nemotron$ ]]; then
         echo "Mistral Nemotron"
-    elif [[ "$name" =~ mistralai/devstral-([0-9]+) ]]; then
-        echo "Devstral ${BASH_REMATCH[1]}"
-    elif [[ "$name" =~ mistral-large-([0-9])-.* ]]; then
+    elif [[ "$clean_name" =~ ^(devstral|codestral)-([0-9]+)$ ]]; then
+        local type="${BASH_REMATCH[1]}"
+        local version="${BASH_REMATCH[2]}"
+        type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
+        echo "${type} ${version}"
+    elif [[ "$clean_name" =~ ^mistral-(small|medium|large)(-latest|-[0-9]{4}-[0-9]{2})?$ ]]; then
+        local size="${BASH_REMATCH[1]}"
+        size="$(echo ${size:0:1} | tr '[:lower:]' '[:upper:]')${size:1}"
+        echo "Mistral ${size}"
+    elif [[ "$clean_name" =~ ^mistral-large-([0-9])-.* ]]; then
         echo "Mistral Large ${BASH_REMATCH[1]}"
 
-    # Handle Llama models
-    elif [[ "$name" =~ llama([0-9])\.?([0-9])?-([0-9]+)b-(instruct|base) ]]; then
+    # Handle Llama 4.x models
+    elif [[ "$clean_name" =~ ^llama-?4\.?([0-9])?-([0-9]+)b-(instruct|base)(-preview)?$ ]]; then
+        local minor="${BASH_REMATCH[1]}"
+        local size="${BASH_REMATCH[2]}"
+        local type="${BASH_REMATCH[3]}"
+        local preview="${BASH_REMATCH[4]}"
+        type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
+        local display="Llama 4"
+        [ -n "$minor" ] && display+=".${minor}"
+        display+=" ${size}B ${type}"
+        [ -n "$preview" ] && display+=" Preview"
+        echo "$display"
+
+    # Handle Llama models (3.x and older)
+    elif [[ "$clean_name" =~ llama([0-9])\.?([0-9])?-([0-9]+)b-(instruct|base) ]]; then
         local major="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local size="${BASH_REMATCH[3]}"
@@ -472,7 +552,7 @@ format_model_name() {
         fi
 
     # Handle OpenAI OSS variants
-    elif [[ "$name" =~ gpt-oss-([0-9]+)b-(medium|large)? ]]; then
+    elif [[ "$clean_name" =~ gpt-oss-([0-9]+)b-(medium|large)? ]]; then
         local size="${BASH_REMATCH[1]}"
         local variant="${BASH_REMATCH[2]}"
         if [ -n "$variant" ]; then
@@ -481,25 +561,24 @@ format_model_name() {
         else
             echo "GPT OSS ${size}B"
         fi
-    elif [[ "$name" =~ openai/gpt-oss-([0-9]+)b ]]; then
-        echo "GPT OSS ${BASH_REMATCH[1]}B"
-    elif [[ "$name" =~ openai-gpt-oss-([0-9]+)b ]]; then
+    elif [[ "$clean_name" =~ gpt-oss-([0-9]+)b ]]; then
         echo "GPT OSS ${BASH_REMATCH[1]}B"
 
     # Handle T-Stars models
-    elif [[ "$name" =~ tstars([0-9])\.([0-9]) ]]; then
+    elif [[ "$clean_name" =~ tstars([0-9])\.([0-9]) ]]; then
         echo "T-Stars ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
 
     # Handle Kwai models
-    elif [[ "$name" =~ kwaipilot/kat-coder-pro ]]; then
+    elif [[ "$clean_name" =~ kat-coder-pro ]]; then
         echo "KAT Coder Pro"
 
     # Handle generic vision models
-    elif [[ "$name" =~ vision-model ]]; then
+    elif [[ "$clean_name" =~ vision-model ]]; then
         echo "Vision Model"
 
+    # Fallback: return original name (strip provider prefix already done)
     else
-        echo "$name"
+        echo "$clean_name"
     fi
 }
 
