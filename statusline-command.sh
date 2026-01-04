@@ -175,6 +175,14 @@ load_config() {
         # Feature toggles
         CLAUDE_STATUSLINE_LINT=$(json_file_get "$CONFIG_FILE" '.features.lint_checking' "false")
         CLAUDE_STATUSLINE_SERVERS=$(json_file_get "$CONFIG_FILE" '.features.server_detection' "true")
+
+        # New feature toggles (from claude-hud)
+        SHOW_RULES=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_rules' "true")
+        SHOW_HOOKS=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_hooks' "true")
+        SHOW_CLAUDE_MD=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_claude_md' "true")
+        SHOW_RUNNING_TOOLS=$(json_file_get "$CONFIG_FILE" '.segments.tools.enabled' "true")
+        SHOW_AGENTS=$(json_file_get "$CONFIG_FILE" '.segments.agents.enabled' "true")
+        SHOW_TODOS=$(json_file_get "$CONFIG_FILE" '.segments.todos.enabled' "true")
     else
         # Defaults when no config file
         CACHE_TTL=$DEFAULT_CACHE_TTL
@@ -196,6 +204,14 @@ load_config() {
         SHOW_SERVERS="true"
         CLAUDE_STATUSLINE_LINT="${CLAUDE_STATUSLINE_LINT:-false}"
         CLAUDE_STATUSLINE_SERVERS="${CLAUDE_STATUSLINE_SERVERS:-true}"
+
+        # New feature toggles defaults
+        SHOW_RULES="true"
+        SHOW_HOOKS="true"
+        SHOW_CLAUDE_MD="true"
+        SHOW_RUNNING_TOOLS="true"
+        SHOW_AGENTS="true"
+        SHOW_TODOS="true"
     fi
 
     # Convert string booleans
@@ -1166,6 +1182,270 @@ detect_running_servers() {
 }
 
 # ============================================================================
+# CONFIG COUNTING (MCP, Rules, Hooks)
+# ============================================================================
+
+count_claude_md_files() {
+    local cwd="$1"
+    local count=0
+    local home_dir="$HOME"
+    local claude_dir="${home_dir}/.claude"
+
+    # User scope
+    [ -f "${claude_dir}/CLAUDE.md" ] && ((count++))
+
+    # Project scope
+    if [ -n "$cwd" ]; then
+        [ -f "${cwd}/CLAUDE.md" ] && ((count++))
+        [ -f "${cwd}/CLAUDE.local.md" ] && ((count++))
+        [ -f "${cwd}/.claude/CLAUDE.md" ] && ((count++))
+        [ -f "${cwd}/.claude/CLAUDE.local.md" ] && ((count++))
+    fi
+
+    echo "$count"
+}
+
+count_rules_in_dir() {
+    local dir="$1"
+    local count=0
+
+    if [ -d "$dir" ]; then
+        count=$(find "$dir" -type f -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+    fi
+
+    echo "$count"
+}
+
+count_rules() {
+    local cwd="$1"
+    local count=0
+    local home_dir="$HOME"
+    local claude_dir="${home_dir}/.claude"
+
+    # User scope: ~/.claude/rules/*.md
+    count=$((count + $(count_rules_in_dir "${claude_dir}/rules")))
+
+    # Project scope: {cwd}/.claude/rules/*.md
+    if [ -n "$cwd" ]; then
+        count=$((count + $(count_rules_in_dir "${cwd}/.claude/rules")))
+    fi
+
+    echo "$count"
+}
+
+count_mcp_servers() {
+    local cwd="$1"
+    local count=0
+    local home_dir="$HOME"
+    local claude_dir="${home_dir}/.claude"
+
+    # User settings: ~/.claude/settings.json
+    if [ -f "${claude_dir}/settings.json" ]; then
+        local user_count
+        user_count=$(jq -r '.mcpServers // {} | keys | length' "${claude_dir}/settings.json" 2>/dev/null || echo "0")
+        count=$((count + user_count))
+    fi
+
+    # User claude.json: ~/.claude.json
+    if [ -f "${home_dir}/.claude.json" ]; then
+        local json_count
+        json_count=$(jq -r '.mcpServers // {} | keys | length' "${home_dir}/.claude.json" 2>/dev/null || echo "0")
+        count=$((count + json_count))
+    fi
+
+    # Project scope
+    if [ -n "$cwd" ]; then
+        # {cwd}/.mcp.json
+        if [ -f "${cwd}/.mcp.json" ]; then
+            local proj_count
+            proj_count=$(jq -r '.mcpServers // {} | keys | length' "${cwd}/.mcp.json" 2>/dev/null || echo "0")
+            count=$((count + proj_count))
+        fi
+
+        # {cwd}/.claude/settings.json
+        if [ -f "${cwd}/.claude/settings.json" ]; then
+            local proj_settings_count
+            proj_settings_count=$(jq -r '.mcpServers // {} | keys | length' "${cwd}/.claude/settings.json" 2>/dev/null || echo "0")
+            count=$((count + proj_settings_count))
+        fi
+
+        # {cwd}/.claude/settings.local.json
+        if [ -f "${cwd}/.claude/settings.local.json" ]; then
+            local local_count
+            local_count=$(jq -r '.mcpServers // {} | keys | length' "${cwd}/.claude/settings.local.json" 2>/dev/null || echo "0")
+            count=$((count + local_count))
+        fi
+    fi
+
+    echo "$count"
+}
+
+count_hooks() {
+    local cwd="$1"
+    local count=0
+    local home_dir="$HOME"
+    local claude_dir="${home_dir}/.claude"
+
+    # User settings: ~/.claude/settings.json
+    if [ -f "${claude_dir}/settings.json" ]; then
+        local user_count
+        user_count=$(jq -r '.hooks // {} | keys | length' "${claude_dir}/settings.json" 2>/dev/null || echo "0")
+        count=$((count + user_count))
+    fi
+
+    # Project scope
+    if [ -n "$cwd" ]; then
+        # {cwd}/.claude/settings.json
+        if [ -f "${cwd}/.claude/settings.json" ]; then
+            local proj_count
+            proj_count=$(jq -r '.hooks // {} | keys | length' "${cwd}/.claude/settings.json" 2>/dev/null || echo "0")
+            count=$((count + proj_count))
+        fi
+
+        # {cwd}/.claude/settings.local.json
+        if [ -f "${cwd}/.claude/settings.local.json" ]; then
+            local local_count
+            local_count=$(jq -r '.hooks // {} | keys | length' "${cwd}/.claude/settings.local.json" 2>/dev/null || echo "0")
+            count=$((count + local_count))
+        fi
+    fi
+
+    echo "$count"
+}
+
+# ============================================================================
+# TRANSCRIPT PARSING (Tools, Agents, Todos)
+# ============================================================================
+
+# Spinner frames for running tools
+readonly SPINNER_FRAMES=("◐" "◓" "◑" "◒")
+
+get_spinner_frame() {
+    local index=$(( $(date +%s) % 4 ))
+    echo "${SPINNER_FRAMES[$index]}"
+}
+
+parse_transcript() {
+    local transcript_path="$1"
+    local result_file="$2"
+
+    [ ! -f "$transcript_path" ] && return
+
+    # Parse JSONL and extract tool_use/tool_result blocks
+    # Output format: JSON with tools, agents, todos arrays
+    local tools_json agents_json todos_json
+
+    # Use jq to process the JSONL file
+    # Extract all tool_use and tool_result blocks with their IDs and timestamps
+    local parsed
+    parsed=$(cat "$transcript_path" 2>/dev/null | while IFS= read -r line; do
+        echo "$line" | jq -c '
+            select(.message.content != null) |
+            .timestamp as $ts |
+            .message.content[] |
+            select(.type == "tool_use" or .type == "tool_result") |
+            {type: .type, id: .id, tool_use_id: .tool_use_id, name: .name, input: .input, is_error: .is_error, timestamp: $ts}
+        ' 2>/dev/null
+    done)
+
+    # Build running tools list (tool_use without matching tool_result)
+    local tool_uses tool_results running_tools completed_counts
+
+    # Get all tool_use entries
+    tool_uses=$(echo "$parsed" | jq -sc '[.[] | select(.type == "tool_use")]' 2>/dev/null)
+
+    # Get all tool_result entries
+    tool_results=$(echo "$parsed" | jq -sc '[.[] | select(.type == "tool_result") | .tool_use_id]' 2>/dev/null)
+
+    # Find running tools (tool_use IDs not in tool_results)
+    running_tools=$(echo "$tool_uses" | jq -c --argjson completed "$tool_results" '
+        [.[] | select(.id as $id | ($completed | index($id)) == null) | select(.name != "TodoWrite")]
+    ' 2>/dev/null)
+
+    # Find running agents (Task tool calls that are still running)
+    local running_agents
+    running_agents=$(echo "$tool_uses" | jq -c --argjson completed "$tool_results" '
+        [.[] | select(.name == "Task") | select(.id as $id | ($completed | index($id)) == null)]
+    ' 2>/dev/null)
+
+    # Get latest todos from last TodoWrite call
+    local latest_todos
+    latest_todos=$(echo "$tool_uses" | jq -c '
+        [.[] | select(.name == "TodoWrite")] | last | .input.todos // []
+    ' 2>/dev/null)
+
+    # Count completed tools by name
+    local completed_tool_uses
+    completed_tool_uses=$(echo "$tool_uses" | jq -c --argjson completed "$tool_results" '
+        [.[] | select(.id as $id | ($completed | index($id)) != null) | select(.name != "TodoWrite" and .name != "Task")]
+    ' 2>/dev/null)
+
+    completed_counts=$(echo "$completed_tool_uses" | jq -c '
+        group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count)
+    ' 2>/dev/null)
+
+    # Write results to temp file
+    echo "{\"running_tools\": $running_tools, \"running_agents\": $running_agents, \"todos\": $latest_todos, \"completed_counts\": $completed_counts}" > "$result_file"
+}
+
+format_tool_target() {
+    local name="$1"
+    local input="$2"
+
+    case "$name" in
+        Read|Write|Edit)
+            local file_path
+            file_path=$(echo "$input" | jq -r '.file_path // .path // empty' 2>/dev/null)
+            if [ -n "$file_path" ]; then
+                basename "$file_path"
+            fi
+            ;;
+        Glob)
+            echo "$input" | jq -r '.pattern // empty' 2>/dev/null
+            ;;
+        Grep)
+            echo "$input" | jq -r '.pattern // empty' 2>/dev/null | head -c 20
+            ;;
+        Bash)
+            local cmd
+            cmd=$(echo "$input" | jq -r '.command // empty' 2>/dev/null)
+            echo "${cmd:0:25}..."
+            ;;
+        Task)
+            echo "$input" | jq -r '.description // empty' 2>/dev/null
+            ;;
+    esac
+}
+
+format_elapsed_time() {
+    local start_timestamp="$1"
+    local current_time="$2"
+
+    # Parse ISO timestamp to epoch
+    local start_epoch
+    start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${start_timestamp%%.*}" +%s 2>/dev/null || echo "0")
+
+    if [ "$start_epoch" -eq 0 ]; then
+        echo ""
+        return
+    fi
+
+    local elapsed=$((current_time - start_epoch))
+
+    if [ "$elapsed" -lt 60 ]; then
+        echo "${elapsed}s"
+    elif [ "$elapsed" -lt 3600 ]; then
+        local mins=$((elapsed / 60))
+        local secs=$((elapsed % 60))
+        echo "${mins}m ${secs}s"
+    else
+        local hours=$((elapsed / 3600))
+        local mins=$(( (elapsed % 3600) / 60 ))
+        echo "${hours}h ${mins}m"
+    fi
+}
+
+# ============================================================================
 # GIT INFORMATION
 # ============================================================================
 
@@ -1433,6 +1713,38 @@ main() {
     local running_servers
     running_servers=$(detect_running_servers)
 
+    # Count configs (MCP, Rules, Hooks)
+    local claude_md_count rules_count mcp_count_new hooks_count_new
+    claude_md_count=$(count_claude_md_files "$current_dir")
+    rules_count=$(count_rules "$current_dir")
+    mcp_count_new=$(count_mcp_servers "$current_dir")
+    hooks_count_new=$(count_hooks "$current_dir")
+
+    # Use counted MCP if JSON count is 0
+    [ "$mcp_servers_count" -eq 0 ] && mcp_servers_count="$mcp_count_new"
+
+    # Parse transcript for tools, agents, todos
+    local transcript_path transcript_result_file
+    transcript_path=$(json_get "$input" '.transcript_path' "")
+    transcript_result_file="/tmp/claude-transcript-result-${session_id}"
+
+    local running_tools_json running_agents_json todos_json completed_counts_json
+    if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
+        parse_transcript "$transcript_path" "$transcript_result_file"
+        if [ -f "$transcript_result_file" ]; then
+            running_tools_json=$(jq -c '.running_tools // []' "$transcript_result_file" 2>/dev/null)
+            running_agents_json=$(jq -c '.running_agents // []' "$transcript_result_file" 2>/dev/null)
+            todos_json=$(jq -c '.todos // []' "$transcript_result_file" 2>/dev/null)
+            completed_counts_json=$(jq -c '.completed_counts // []' "$transcript_result_file" 2>/dev/null)
+        fi
+    fi
+
+    # Default to empty arrays if not set
+    [ -z "$running_tools_json" ] && running_tools_json="[]"
+    [ -z "$running_agents_json" ] && running_agents_json="[]"
+    [ -z "$todos_json" ] && todos_json="[]"
+    [ -z "$completed_counts_json" ] && completed_counts_json="[]"
+
     # Calculate cost
     local session_cost
     session_cost=$(calculate_cost "$provider_name" "$model_id" "$total_input" "$total_output" "$cache_creation_tokens" "$cache_read_tokens")
@@ -1531,6 +1843,17 @@ main() {
     # Always show message count
     printf " · ${C_CYAN}%d msg${C_RESET}" "$message_count"
 
+    # MCP, Rules, Hooks counts
+    local config_parts=()
+    [ "$SHOW_CLAUDE_MD" = "true" ] && [ "$claude_md_count" -gt 0 ] && config_parts+=("📋 ${claude_md_count}")
+    [ "$SHOW_RULES" = "true" ] && [ "$rules_count" -gt 0 ] && config_parts+=("📜 ${rules_count}")
+    [ "$SHOW_MCP_SERVERS" = "true" ] && [ "$mcp_servers_count" -gt 0 ] && config_parts+=("🔌 ${mcp_servers_count}")
+    [ "$SHOW_HOOKS" = "true" ] && [ "$hooks_count_new" -gt 0 ] && config_parts+=("🪝 ${hooks_count_new}")
+
+    if [ ${#config_parts[@]} -gt 0 ]; then
+        printf " · ${C_GRAY}%s${C_RESET}" "$(IFS=' '; echo "${config_parts[*]}")"
+    fi
+
     # Lines changed
     if [ "$lines_added" -gt 0 ] || [ "$lines_removed" -gt 0 ]; then
         if [ "$lines_added" -gt 0 ] && [ "$lines_removed" -gt 0 ]; then
@@ -1577,6 +1900,126 @@ main() {
     fi
 
     [ -n "$dev_info" ] && printf "  🔧 %b\n" "$dev_info"
+
+    # Line 4: Tools activity (running + completed counts)
+    local running_tools_count completed_tools_output
+    running_tools_count=$(echo "$running_tools_json" | jq 'length' 2>/dev/null || echo "0")
+    completed_tools_output=""
+
+    # Build completed tools summary
+    local completed_arr
+    completed_arr=$(echo "$completed_counts_json" | jq -c '.[]' 2>/dev/null)
+    if [ -n "$completed_arr" ]; then
+        while IFS= read -r tool_entry; do
+            local tname tcount
+            tname=$(echo "$tool_entry" | jq -r '.name' 2>/dev/null)
+            tcount=$(echo "$tool_entry" | jq -r '.count' 2>/dev/null)
+            [ -n "$tname" ] && [ "$tcount" -gt 0 ] && completed_tools_output+="✓ ${tname} ×${tcount} "
+        done <<< "$completed_arr"
+    fi
+
+    # Show running tools with spinner (if enabled)
+    if [ "$SHOW_RUNNING_TOOLS" = "true" ] && { [ "$running_tools_count" -gt 0 ] || [ -n "$completed_tools_output" ]; }; then
+        local spinner
+        spinner=$(get_spinner_frame)
+        printf "  "
+
+        # Running tools
+        if [ "$running_tools_count" -gt 0 ]; then
+            local first_running_tool
+            first_running_tool=$(echo "$running_tools_json" | jq -c '.[0]' 2>/dev/null)
+            local tool_name tool_input tool_target tool_timestamp elapsed
+            tool_name=$(echo "$first_running_tool" | jq -r '.name // empty' 2>/dev/null)
+            tool_input=$(echo "$first_running_tool" | jq -c '.input // {}' 2>/dev/null)
+            tool_target=$(format_tool_target "$tool_name" "$tool_input")
+            tool_timestamp=$(echo "$first_running_tool" | jq -r '.timestamp // empty' 2>/dev/null)
+
+            if [ -n "$tool_timestamp" ]; then
+                elapsed=$(format_elapsed_time "$tool_timestamp" "$current_time")
+            fi
+
+            printf "${C_YELLOW}%s${C_RESET} %s" "$spinner" "$tool_name"
+            [ -n "$tool_target" ] && printf ": ${C_CYAN}%s${C_RESET}" "$tool_target"
+            [ -n "$elapsed" ] && printf " ${C_GRAY}(%s)${C_RESET}" "$elapsed"
+
+            # Show additional running tools count
+            if [ "$running_tools_count" -gt 1 ]; then
+                printf " ${C_GRAY}+%d more${C_RESET}" "$((running_tools_count - 1))"
+            fi
+        fi
+
+        # Completed tools
+        if [ -n "$completed_tools_output" ]; then
+            [ "$running_tools_count" -gt 0 ] && printf " · "
+            printf "${C_GREEN}%s${C_RESET}" "${completed_tools_output% }"
+        fi
+
+        printf "\n"
+    fi
+
+    # Line 5: Active agents (if enabled)
+    local running_agents_count
+    running_agents_count=$(echo "$running_agents_json" | jq 'length' 2>/dev/null || echo "0")
+
+    if [ "$SHOW_AGENTS" = "true" ] && [ "$running_agents_count" -gt 0 ]; then
+        local spinner
+        spinner=$(get_spinner_frame)
+
+        # Show first running agent
+        local first_agent agent_type agent_model agent_desc agent_timestamp elapsed
+        first_agent=$(echo "$running_agents_json" | jq -c '.[0]' 2>/dev/null)
+        agent_type=$(echo "$first_agent" | jq -r '.input.subagent_type // "unknown"' 2>/dev/null)
+        agent_model=$(echo "$first_agent" | jq -r '.input.model // empty' 2>/dev/null)
+        agent_desc=$(echo "$first_agent" | jq -r '.input.description // empty' 2>/dev/null)
+        agent_timestamp=$(echo "$first_agent" | jq -r '.timestamp // empty' 2>/dev/null)
+
+        if [ -n "$agent_timestamp" ]; then
+            elapsed=$(format_elapsed_time "$agent_timestamp" "$current_time")
+        fi
+
+        printf "  ${C_YELLOW}%s${C_RESET} ${C_PURPLE}%s${C_RESET}" "$spinner" "$agent_type"
+        [ -n "$agent_model" ] && printf " [${C_CYAN}%s${C_RESET}]" "$agent_model"
+        [ -n "$agent_desc" ] && printf ": %s" "$agent_desc"
+        [ -n "$elapsed" ] && printf " ${C_GRAY}(%s)${C_RESET}" "$elapsed"
+
+        # Show additional agents count
+        if [ "$running_agents_count" -gt 1 ]; then
+            printf " ${C_GRAY}+%d more${C_RESET}" "$((running_agents_count - 1))"
+        fi
+
+        printf "\n"
+    fi
+
+    # Line 6: Todo progress (if enabled)
+    local todos_count in_progress_todo completed_count pending_count
+    todos_count=$(echo "$todos_json" | jq 'length' 2>/dev/null || echo "0")
+
+    if [ "$SHOW_TODOS" = "true" ] && [ "$todos_count" -gt 0 ]; then
+        # Find in_progress todo
+        in_progress_todo=$(echo "$todos_json" | jq -c '[.[] | select(.status == "in_progress")] | .[0] // empty' 2>/dev/null)
+        completed_count=$(echo "$todos_json" | jq '[.[] | select(.status == "completed")] | length' 2>/dev/null || echo "0")
+        pending_count=$(echo "$todos_json" | jq '[.[] | select(.status == "pending")] | length' 2>/dev/null || echo "0")
+
+        printf "  ▸ "
+
+        if [ -n "$in_progress_todo" ] && [ "$in_progress_todo" != "null" ]; then
+            local active_form content
+            active_form=$(echo "$in_progress_todo" | jq -r '.activeForm // empty' 2>/dev/null)
+            content=$(echo "$in_progress_todo" | jq -r '.content // empty' 2>/dev/null)
+
+            if [ -n "$active_form" ]; then
+                printf "${C_YELLOW}%s${C_RESET}" "$active_form"
+            elif [ -n "$content" ]; then
+                printf "${C_YELLOW}%s${C_RESET}" "$content"
+            fi
+        else
+            printf "${C_GRAY}No active task${C_RESET}"
+        fi
+
+        # Show progress counter
+        printf " ${C_GRAY}(%d/%d)${C_RESET}" "$completed_count" "$todos_count"
+        printf "\n"
+    fi
 }
 
 # Run main
