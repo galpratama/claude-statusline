@@ -17,9 +17,9 @@
       "show_mcp_servers": true,
       "show_tools_count": true,
       "show_response_time": true,
-      "show_claude_md": true,
-      "show_rules": true,
-      "show_hooks": true
+      "show_claude_md": false,
+      "show_rules": false,
+      "show_hooks": false
     },
     "git": {
       "enabled": true,
@@ -36,7 +36,7 @@
       "show_session_start": true,
       "show_current_time": true,
       "show_language": true,
-      "show_package_manager": true,
+      "show_package_manager": false,
       "show_lint_errors": false,
       "show_running_servers": true
     },
@@ -63,5 +63,9 @@
     "theme": "default"
   },
   "subscriptions": {
+    "GLM": {
+      "type": "yearly",
+      "renewal_date": "2027-02-01"
+    }
   }
 }

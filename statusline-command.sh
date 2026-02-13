@@ -1877,70 +1877,71 @@ main() {
     fi
 
     # ========================================================================
-    # OUTPUT GENERATION
+    # OUTPUT GENERATION (Box-drawing layout)
     # ========================================================================
 
-    # Line 1: Cost info
-    printf "   ❖"
-    printf " ${C_YELLOW}%s${C_RESET}" "$final_cost_display"
-    printf " · %s · %s" "$provider_section" "$model"
-    printf " · %s" "$duration"
+    # Collect all output lines and their types for gutter rendering
+    local -a out_lines=()
+    local -a out_types=()  # "n" = normal, "s" = section break
 
-    printf " · ${C_CYAN}↑ %s${C_RESET} · ${C_PURPLE}↓ %s${C_RESET}" "$(format_k "$total_input")" "$(format_k "$total_output")"
+    # --- Line 1: Model · Provider · Cost · Duration · Messages ---
+    local l1="${C_PURPLE}${model}${C_RESET} · ${provider_section}"
+    l1+=" · ${final_cost_color}${final_cost_display}${C_RESET}"
+    l1+=" · ${C_GRAY}${duration}${C_RESET}"
+    l1+=" · ${C_CYAN}${message_count} msg${C_RESET}"
+    [ -z "$git_info" ] && l1+=" · ◈ ${dir}"
+    out_lines+=("$l1"); out_types+=("n")
 
-    # Context window usage
+    # --- Line 2: Tokens · Context · Lines Changed · Stats · Config ---
+    local l2="${C_CYAN}↑ $(format_k "$total_input")${C_RESET} ${C_PURPLE}↓ $(format_k "$total_output")${C_RESET}"
+
     if [ "$context_usage_pct" -gt 0 ]; then
-        printf " · ${context_usage_color}%d%% ctx${C_RESET}" "$context_usage_pct"
+        l2+=" · ${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
     fi
 
-    # Always show message count
-    printf " · ${C_CYAN}%d msg${C_RESET}" "$message_count"
+    if [ "$cache_efficiency" -gt 0 ]; then
+        l2+=" · ${C_GREEN}${cache_efficiency}% cache${C_RESET}"
+    fi
 
-    # MCP, Rules, Hooks counts
+    if [ "$lines_added" -gt 0 ] || [ "$lines_removed" -gt 0 ]; then
+        l2+=" · "
+        if [ "$lines_added" -gt 0 ] && [ "$lines_removed" -gt 0 ]; then
+            l2+="${C_GREEN}+${lines_added}${C_RESET}/${C_RED}-${lines_removed}${C_RESET}"
+        elif [ "$lines_added" -gt 0 ]; then
+            l2+="${C_GREEN}+${lines_added}${C_RESET}"
+        else
+            l2+="${C_RED}-${lines_removed}${C_RESET}"
+        fi
+    fi
+
+    local stats_parts=()
+    [ "$tool_calls_count" -gt 0 ] && stats_parts+=("⚙ $tool_calls_count")
+    [ "$files_edited_count" -gt 0 ] && stats_parts+=("✎ $files_edited_count")
+    [ "$bash_commands_count" -gt 0 ] && stats_parts+=("⚡ $bash_commands_count")
+    if [ ${#stats_parts[@]} -gt 0 ]; then
+        l2+=" · ${C_GRAY}$(IFS=' '; echo "${stats_parts[*]}")${C_RESET}"
+    fi
+
     local config_parts=()
     [ "$SHOW_CLAUDE_MD" = "true" ] && [ "$claude_md_count" -gt 0 ] && config_parts+=("📝 ${claude_md_count}")
     [ "$SHOW_RULES" = "true" ] && [ "$rules_count" -gt 0 ] && config_parts+=("§ ${rules_count}")
     [ "$SHOW_MCP_SERVERS" = "true" ] && [ "$mcp_servers_count" -gt 0 ] && config_parts+=("🔌 ${mcp_servers_count}")
     [ "$SHOW_HOOKS" = "true" ] && [ "$hooks_count_new" -gt 0 ] && config_parts+=("⚓ ${hooks_count_new}")
-
     if [ ${#config_parts[@]} -gt 0 ]; then
-        printf " · ${C_WHITE}%s${C_RESET}" "$(IFS=' '; echo "${config_parts[*]}")"
+        l2+=" · $(IFS=' '; echo "${config_parts[*]}")"
     fi
 
-    # Lines changed
-    if [ "$lines_added" -gt 0 ] || [ "$lines_removed" -gt 0 ]; then
-        if [ "$lines_added" -gt 0 ] && [ "$lines_removed" -gt 0 ]; then
-            printf " · ${C_GREEN}+%d${C_RESET}/${C_RED}-%d${C_RESET}" "$lines_added" "$lines_removed"
-        elif [ "$lines_added" -gt 0 ]; then
-            printf " · ${C_GREEN}+%d${C_RESET}" "$lines_added"
-        elif [ "$lines_removed" -gt 0 ]; then
-            printf " · ${C_RED}-%d${C_RESET}" "$lines_removed"
-        fi
-    fi
+    out_lines+=("$l2"); out_types+=("n")
 
-    # Session statistics
-    local stats_parts=()
-    [ "$tool_calls_count" -gt 0 ] && stats_parts+=("⚙ $tool_calls_count")
-    [ "$files_edited_count" -gt 0 ] && stats_parts+=("✎ $files_edited_count")
-    [ "$bash_commands_count" -gt 0 ] && stats_parts+=("⚡ $bash_commands_count")
-
-    if [ ${#stats_parts[@]} -gt 0 ]; then
-        printf " · ${C_GRAY}%s${C_RESET}" "$(IFS=' · '; echo "${stats_parts[*]}")"
-    fi
-
-    # Folder if not git
-    [ -z "$git_info" ] && printf " · ◈ %s" "$dir"
-    printf "\n"
-
-    # Line 2: Git info
+    # --- Git line (section break) ---
     if [ -n "$git_info" ]; then
-        printf "  ◈ %s %s" "$dir" "$git_info"
-        [ -n "$last_commit_time" ] && printf " · ${C_GRAY}%s${C_RESET}" "$last_commit_time"
-        [ -n "$commits_today" ] && printf " · ${C_GREEN}%s today" "$commits_today"
-        printf "\n"
+        local lg="◈ ${dir} ${git_info}"
+        [ -n "$last_commit_time" ] && lg+=" · ${C_GRAY}${last_commit_time}${C_RESET}"
+        [ -n "$commits_today" ] && lg+=" · ${C_GREEN}${commits_today} today${C_RESET}"
+        out_lines+=("$lg"); out_types+=("s")
     fi
 
-    # Line 3: Dev info
+    # --- Dev line ---
     local dev_info=""
     [ -n "$prog_lang" ] && dev_info+="$prog_lang"
     if [ -n "$package_manager" ]; then
@@ -1951,15 +1952,13 @@ main() {
         [ -n "$dev_info" ] && dev_info+=" · "
         dev_info+="${C_GREEN}${running_servers}${C_RESET}"
     fi
+    [ -n "$dev_info" ] && { out_lines+=("$dev_info"); out_types+=("n"); }
 
-    [ -n "$dev_info" ] && printf "  ◆ %b\n" "$dev_info"
-
-    # Line 4: Tools activity (running + completed counts)
+    # --- Tools line ---
     local running_tools_count completed_tools_output
     running_tools_count=$(echo "$running_tools_json" | jq 'length' 2>/dev/null || echo "0")
     completed_tools_output=""
 
-    # Build completed tools summary
     local completed_arr
     completed_arr=$(echo "$completed_counts_json" | jq -c '.[]' 2>/dev/null)
     if [ -n "$completed_arr" ]; then
@@ -1971,108 +1970,101 @@ main() {
         done <<< "$completed_arr"
     fi
 
-    # Show running tools with spinner (if enabled)
     if [ "$SHOW_RUNNING_TOOLS" = "true" ] && { [ "$running_tools_count" -gt 0 ] || [ -n "$completed_tools_output" ]; }; then
+        local lt=""
         local spinner
         spinner=$(get_spinner_frame)
-        printf "  "
 
-        # Running tools
         if [ "$running_tools_count" -gt 0 ]; then
-            local first_running_tool
+            local first_running_tool tool_name tool_input tool_target tool_timestamp elapsed
             first_running_tool=$(echo "$running_tools_json" | jq -c '.[0]' 2>/dev/null)
-            local tool_name tool_input tool_target tool_timestamp elapsed
             tool_name=$(echo "$first_running_tool" | jq -r '.name // empty' 2>/dev/null)
             tool_input=$(echo "$first_running_tool" | jq -c '.input // {}' 2>/dev/null)
             tool_target=$(format_tool_target "$tool_name" "$tool_input")
             tool_timestamp=$(echo "$first_running_tool" | jq -r '.timestamp // empty' 2>/dev/null)
+            [ -n "$tool_timestamp" ] && elapsed=$(format_elapsed_time "$tool_timestamp" "$current_time")
 
-            if [ -n "$tool_timestamp" ]; then
-                elapsed=$(format_elapsed_time "$tool_timestamp" "$current_time")
-            fi
-
-            printf "${C_YELLOW}%s${C_RESET} %s" "$spinner" "$tool_name"
-            [ -n "$tool_target" ] && printf ": ${C_CYAN}%s${C_RESET}" "$tool_target"
-            [ -n "$elapsed" ] && printf " ${C_GRAY}(%s)${C_RESET}" "$elapsed"
-
-            # Show additional running tools count
-            if [ "$running_tools_count" -gt 1 ]; then
-                printf " ${C_GRAY}+%d more${C_RESET}" "$((running_tools_count - 1))"
-            fi
+            lt+="${C_YELLOW}${spinner}${C_RESET} ${tool_name}"
+            [ -n "$tool_target" ] && lt+=": ${C_CYAN}${tool_target}${C_RESET}"
+            [ -n "$elapsed" ] && lt+=" ${C_GRAY}(${elapsed})${C_RESET}"
+            [ "$running_tools_count" -gt 1 ] && lt+=" ${C_GRAY}+$((running_tools_count - 1)) more${C_RESET}"
         fi
 
-        # Completed tools
         if [ -n "$completed_tools_output" ]; then
-            [ "$running_tools_count" -gt 0 ] && printf " · "
-            printf "${C_GREEN}%s${C_RESET}" "${completed_tools_output% }"
+            [ "$running_tools_count" -gt 0 ] && lt+=" · "
+            lt+="${C_GREEN}${completed_tools_output% }${C_RESET}"
         fi
 
-        printf "\n"
+        out_lines+=("$lt"); out_types+=("n")
     fi
 
-    # Line 5: Active agents (if enabled)
+    # --- Agents line ---
     local running_agents_count
     running_agents_count=$(echo "$running_agents_json" | jq 'length' 2>/dev/null || echo "0")
 
     if [ "$SHOW_AGENTS" = "true" ] && [ "$running_agents_count" -gt 0 ]; then
-        local spinner
+        local la="" spinner
         spinner=$(get_spinner_frame)
 
-        # Show first running agent
         local first_agent agent_type agent_model agent_desc agent_timestamp elapsed
         first_agent=$(echo "$running_agents_json" | jq -c '.[0]' 2>/dev/null)
         agent_type=$(echo "$first_agent" | jq -r '.input.subagent_type // "unknown"' 2>/dev/null)
         agent_model=$(echo "$first_agent" | jq -r '.input.model // empty' 2>/dev/null)
         agent_desc=$(echo "$first_agent" | jq -r '.input.description // empty' 2>/dev/null)
         agent_timestamp=$(echo "$first_agent" | jq -r '.timestamp // empty' 2>/dev/null)
+        [ -n "$agent_timestamp" ] && elapsed=$(format_elapsed_time "$agent_timestamp" "$current_time")
 
-        if [ -n "$agent_timestamp" ]; then
-            elapsed=$(format_elapsed_time "$agent_timestamp" "$current_time")
-        fi
+        la+="${C_YELLOW}${spinner}${C_RESET} ${C_PURPLE}${agent_type}${C_RESET}"
+        [ -n "$agent_model" ] && la+=" [${C_CYAN}${agent_model}${C_RESET}]"
+        [ -n "$agent_desc" ] && la+=": ${agent_desc}"
+        [ -n "$elapsed" ] && la+=" ${C_GRAY}(${elapsed})${C_RESET}"
+        [ "$running_agents_count" -gt 1 ] && la+=" ${C_GRAY}+$((running_agents_count - 1)) more${C_RESET}"
 
-        printf "  ${C_YELLOW}%s${C_RESET} ${C_PURPLE}%s${C_RESET}" "$spinner" "$agent_type"
-        [ -n "$agent_model" ] && printf " [${C_CYAN}%s${C_RESET}]" "$agent_model"
-        [ -n "$agent_desc" ] && printf ": %s" "$agent_desc"
-        [ -n "$elapsed" ] && printf " ${C_GRAY}(%s)${C_RESET}" "$elapsed"
-
-        # Show additional agents count
-        if [ "$running_agents_count" -gt 1 ]; then
-            printf " ${C_GRAY}+%d more${C_RESET}" "$((running_agents_count - 1))"
-        fi
-
-        printf "\n"
+        out_lines+=("$la"); out_types+=("n")
     fi
 
-    # Line 6: Todo progress (if enabled)
-    local todos_count in_progress_todo completed_count pending_count
+    # --- Todos line ---
+    local todos_count
     todos_count=$(echo "$todos_json" | jq 'length' 2>/dev/null || echo "0")
 
     if [ "$SHOW_TODOS" = "true" ] && [ "$todos_count" -gt 0 ]; then
-        # Find in_progress todo
+        local ltodo="" in_progress_todo completed_count
         in_progress_todo=$(echo "$todos_json" | jq -c '[.[] | select(.status == "in_progress")] | .[0] // empty' 2>/dev/null)
         completed_count=$(echo "$todos_json" | jq '[.[] | select(.status == "completed")] | length' 2>/dev/null || echo "0")
-        pending_count=$(echo "$todos_json" | jq '[.[] | select(.status == "pending")] | length' 2>/dev/null || echo "0")
 
-        printf "  ▸ "
-
+        ltodo+="▸ "
         if [ -n "$in_progress_todo" ] && [ "$in_progress_todo" != "null" ]; then
             local active_form content
             active_form=$(echo "$in_progress_todo" | jq -r '.activeForm // empty' 2>/dev/null)
             content=$(echo "$in_progress_todo" | jq -r '.content // empty' 2>/dev/null)
-
             if [ -n "$active_form" ]; then
-                printf "${C_YELLOW}%s${C_RESET}" "$active_form"
+                ltodo+="${C_YELLOW}${active_form}${C_RESET}"
             elif [ -n "$content" ]; then
-                printf "${C_YELLOW}%s${C_RESET}" "$content"
+                ltodo+="${C_YELLOW}${content}${C_RESET}"
             fi
         else
-            printf "${C_GRAY}No active task${C_RESET}"
+            ltodo+="${C_GRAY}No active task${C_RESET}"
         fi
+        ltodo+=" ${C_GRAY}(${completed_count}/${todos_count})${C_RESET}"
 
-        # Show progress counter
-        printf " ${C_GRAY}(%d/%d)${C_RESET}" "$completed_count" "$todos_count"
-        printf "\n"
+        out_lines+=("$ltodo"); out_types+=("n")
     fi
+
+    # --- Render with box-drawing gutter ---
+    local total=${#out_lines[@]}
+    for ((i=0; i<total; i++)); do
+        local gutter
+        if [ $i -eq 0 ]; then
+            gutter="${C_GRAY}┌${C_RESET}"
+        elif [ $i -eq $((total - 1)) ]; then
+            gutter="${C_GRAY}└${C_RESET}"
+        elif [ "${out_types[$i]}" = "s" ]; then
+            gutter="${C_GRAY}├${C_RESET}"
+        else
+            gutter="${C_GRAY}│${C_RESET}"
+        fi
+        printf "  %b %b\n" "$gutter" "${out_lines[$i]}"
+    done
 }
 
 # Run main
