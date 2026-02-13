@@ -1877,40 +1877,32 @@ main() {
     fi
 
     # ========================================================================
-    # OUTPUT GENERATION (Box-drawing layout)
+    # OUTPUT GENERATION (Compact box-drawing layout)
     # ========================================================================
 
     # Collect all output lines and their types for gutter rendering
     local -a out_lines=()
     local -a out_types=()  # "n" = normal, "s" = section break
 
-    # --- Line 1: Model · Provider · Cost · Duration · Messages ---
+    # --- Line 1: Model · Provider · Cost · Duration · Msg · Tokens · Ctx ---
     local l1="${C_PURPLE}${model}${C_RESET} · ${provider_section}"
     l1+=" · ${final_cost_color}${final_cost_display}${C_RESET}"
     l1+=" · ${C_GRAY}${duration}${C_RESET}"
     l1+=" · ${C_CYAN}${message_count} msg${C_RESET}"
-    [ -z "$git_info" ] && l1+=" · ◈ ${dir}"
+    l1+=" · ${C_CYAN}↑$(format_k "$total_input")${C_RESET} ${C_PURPLE}↓$(format_k "$total_output")${C_RESET}"
+    [ "$context_usage_pct" -gt 0 ] && l1+=" · ${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
     out_lines+=("$l1"); out_types+=("n")
 
-    # --- Line 2: Tokens · Context · Lines Changed · Stats · Config ---
-    local l2="${C_CYAN}↑ $(format_k "$total_input")${C_RESET} ${C_PURPLE}↓ $(format_k "$total_output")${C_RESET}"
-
-    if [ "$context_usage_pct" -gt 0 ]; then
-        l2+=" · ${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
-    fi
-
-    if [ "$cache_efficiency" -gt 0 ]; then
-        l2+=" · ${C_GREEN}${cache_efficiency}% cache${C_RESET}"
-    fi
+    # Build shared extras: lines changed, stats, config
+    local extras=""
 
     if [ "$lines_added" -gt 0 ] || [ "$lines_removed" -gt 0 ]; then
-        l2+=" · "
         if [ "$lines_added" -gt 0 ] && [ "$lines_removed" -gt 0 ]; then
-            l2+="${C_GREEN}+${lines_added}${C_RESET}/${C_RED}-${lines_removed}${C_RESET}"
+            extras+=" · ${C_GREEN}+${lines_added}${C_RESET}/${C_RED}-${lines_removed}${C_RESET}"
         elif [ "$lines_added" -gt 0 ]; then
-            l2+="${C_GREEN}+${lines_added}${C_RESET}"
+            extras+=" · ${C_GREEN}+${lines_added}${C_RESET}"
         else
-            l2+="${C_RED}-${lines_removed}${C_RESET}"
+            extras+=" · ${C_RED}-${lines_removed}${C_RESET}"
         fi
     fi
 
@@ -1918,30 +1910,28 @@ main() {
     [ "$tool_calls_count" -gt 0 ] && stats_parts+=("⚙ $tool_calls_count")
     [ "$files_edited_count" -gt 0 ] && stats_parts+=("✎ $files_edited_count")
     [ "$bash_commands_count" -gt 0 ] && stats_parts+=("⚡ $bash_commands_count")
-    if [ ${#stats_parts[@]} -gt 0 ]; then
-        l2+=" · ${C_GRAY}$(IFS=' '; echo "${stats_parts[*]}")${C_RESET}"
-    fi
+    [ ${#stats_parts[@]} -gt 0 ] && extras+=" · ${C_GRAY}$(IFS=' '; echo "${stats_parts[*]}")${C_RESET}"
 
     local config_parts=()
     [ "$SHOW_CLAUDE_MD" = "true" ] && [ "$claude_md_count" -gt 0 ] && config_parts+=("📝 ${claude_md_count}")
     [ "$SHOW_RULES" = "true" ] && [ "$rules_count" -gt 0 ] && config_parts+=("§ ${rules_count}")
     [ "$SHOW_MCP_SERVERS" = "true" ] && [ "$mcp_servers_count" -gt 0 ] && config_parts+=("🔌 ${mcp_servers_count}")
     [ "$SHOW_HOOKS" = "true" ] && [ "$hooks_count_new" -gt 0 ] && config_parts+=("⚓ ${hooks_count_new}")
-    if [ ${#config_parts[@]} -gt 0 ]; then
-        l2+=" · $(IFS=' '; echo "${config_parts[*]}")"
-    fi
+    [ ${#config_parts[@]} -gt 0 ] && extras+=" · $(IFS=' '; echo "${config_parts[*]}")"
 
-    out_lines+=("$l2"); out_types+=("n")
-
-    # --- Git line (section break) ---
+    # --- Line 2: Project info (git or folder) + extras ---
     if [ -n "$git_info" ]; then
         local lg="◈ ${dir} ${git_info}"
         [ -n "$last_commit_time" ] && lg+=" · ${C_GRAY}${last_commit_time}${C_RESET}"
         [ -n "$commits_today" ] && lg+=" · ${C_GREEN}${commits_today} today${C_RESET}"
+        lg+="$extras"
+        out_lines+=("$lg"); out_types+=("s")
+    else
+        local lg="◈ ${dir}${extras}"
         out_lines+=("$lg"); out_types+=("s")
     fi
 
-    # --- Dev line ---
+    # --- Dev line (optional) ---
     local dev_info=""
     [ -n "$prog_lang" ] && dev_info+="$prog_lang"
     if [ -n "$package_manager" ]; then
@@ -1954,7 +1944,7 @@ main() {
     fi
     [ -n "$dev_info" ] && { out_lines+=("$dev_info"); out_types+=("n"); }
 
-    # --- Tools line ---
+    # --- Tools line (only when active) ---
     local running_tools_count completed_tools_output
     running_tools_count=$(echo "$running_tools_json" | jq 'length' 2>/dev/null || echo "0")
     completed_tools_output=""
@@ -1998,7 +1988,7 @@ main() {
         out_lines+=("$lt"); out_types+=("n")
     fi
 
-    # --- Agents line ---
+    # --- Agents line (only when active) ---
     local running_agents_count
     running_agents_count=$(echo "$running_agents_json" | jq 'length' 2>/dev/null || echo "0")
 
@@ -2023,7 +2013,7 @@ main() {
         out_lines+=("$la"); out_types+=("n")
     fi
 
-    # --- Todos line ---
+    # --- Todos line (only when active) ---
     local todos_count
     todos_count=$(echo "$todos_json" | jq 'length' 2>/dev/null || echo "0")
 
