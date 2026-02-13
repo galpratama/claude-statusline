@@ -1877,74 +1877,85 @@ main() {
     fi
 
     # ========================================================================
-    # OUTPUT GENERATION (Compact box-drawing layout)
+    # OUTPUT GENERATION (Ultra compact 2-line layout with ┊ separators)
     # ========================================================================
 
-    # Collect all output lines and their types for gutter rendering
     local -a out_lines=()
-    local -a out_types=()  # "n" = normal, "s" = section break
+    local -a out_types=()
+    local SEP=" ${C_GRAY}┊${C_RESET} "
 
-    # --- Line 1: Model · Provider · Cost · Duration · Msg · Tokens · Ctx ---
+    # --- Line 1: Model · Provider · Cost · Duration · Msg  ┊  Tokens · Ctx ---
     local l1="${C_PURPLE}${model}${C_RESET} · ${provider_section}"
     l1+=" · ${final_cost_color}${final_cost_display}${C_RESET}"
     l1+=" · ${C_GRAY}${duration}${C_RESET}"
     l1+=" · ${C_CYAN}${message_count} msg${C_RESET}"
-    l1+=" · ${C_CYAN}↑$(format_k "$total_input")${C_RESET} ${C_PURPLE}↓$(format_k "$total_output")${C_RESET}"
-    [ "$context_usage_pct" -gt 0 ] && l1+=" · ${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
+
+    local tok_sec="${C_CYAN}↑$(format_k "$total_input")${C_RESET} ${C_PURPLE}↓$(format_k "$total_output")${C_RESET}"
+    [ "$context_usage_pct" -gt 0 ] && tok_sec+=" · ${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
+    l1+="${SEP}${tok_sec}"
+
     out_lines+=("$l1"); out_types+=("n")
 
-    # Build shared extras: lines changed, stats, config
-    local extras=""
+    # --- Line 2: Git/folder + changes  ┊  Stats  ┊  Dev + Config ---
+    local l2=""
+
+    # Section 1: Git or folder + lines changed
+    if [ -n "$git_info" ]; then
+        l2+="${dir} ${git_info}"
+        [ -n "$last_commit_time" ] && l2+=" · ${C_GRAY}${last_commit_time}${C_RESET}"
+        [ -n "$commits_today" ] && l2+=" · ${C_GREEN}${commits_today} today${C_RESET}"
+    else
+        l2+="◈ ${dir}"
+    fi
 
     if [ "$lines_added" -gt 0 ] || [ "$lines_removed" -gt 0 ]; then
+        l2+=" · "
         if [ "$lines_added" -gt 0 ] && [ "$lines_removed" -gt 0 ]; then
-            extras+=" · ${C_GREEN}+${lines_added}${C_RESET}/${C_RED}-${lines_removed}${C_RESET}"
+            l2+="${C_GREEN}+${lines_added}${C_RESET}/${C_RED}-${lines_removed}${C_RESET}"
         elif [ "$lines_added" -gt 0 ]; then
-            extras+=" · ${C_GREEN}+${lines_added}${C_RESET}"
+            l2+="${C_GREEN}+${lines_added}${C_RESET}"
         else
-            extras+=" · ${C_RED}-${lines_removed}${C_RESET}"
+            l2+="${C_RED}-${lines_removed}${C_RESET}"
         fi
     fi
 
+    # Section 2: Stats
+    local stats_sec=""
     local stats_parts=()
     [ "$tool_calls_count" -gt 0 ] && stats_parts+=("⚙ $tool_calls_count")
     [ "$files_edited_count" -gt 0 ] && stats_parts+=("✎ $files_edited_count")
     [ "$bash_commands_count" -gt 0 ] && stats_parts+=("⚡ $bash_commands_count")
-    [ ${#stats_parts[@]} -gt 0 ] && extras+=" · ${C_GRAY}$(IFS=' '; echo "${stats_parts[*]}")${C_RESET}"
+    [ ${#stats_parts[@]} -gt 0 ] && stats_sec="${C_GRAY}$(IFS=' '; echo "${stats_parts[*]}")${C_RESET}"
+
+    # Section 3: Dev + Config
+    local dev_cfg=""
+    [ -n "$prog_lang" ] && dev_cfg+="$prog_lang"
+    if [ -n "$package_manager" ]; then
+        [ -n "$dev_cfg" ] && dev_cfg+=" · "
+        dev_cfg+="$package_manager"
+    fi
+    if [ -n "$running_servers" ]; then
+        [ -n "$dev_cfg" ] && dev_cfg+=" · "
+        dev_cfg+="${C_GREEN}${running_servers}${C_RESET}"
+    fi
 
     local config_parts=()
     [ "$SHOW_CLAUDE_MD" = "true" ] && [ "$claude_md_count" -gt 0 ] && config_parts+=("📝 ${claude_md_count}")
     [ "$SHOW_RULES" = "true" ] && [ "$rules_count" -gt 0 ] && config_parts+=("§ ${rules_count}")
     [ "$SHOW_MCP_SERVERS" = "true" ] && [ "$mcp_servers_count" -gt 0 ] && config_parts+=("🔌 ${mcp_servers_count}")
     [ "$SHOW_HOOKS" = "true" ] && [ "$hooks_count_new" -gt 0 ] && config_parts+=("⚓ ${hooks_count_new}")
-    [ ${#config_parts[@]} -gt 0 ] && extras+=" · $(IFS=' '; echo "${config_parts[*]}")"
-
-    # --- Line 2: Project info (git or folder) + extras ---
-    if [ -n "$git_info" ]; then
-        local lg="◈ ${dir} ${git_info}"
-        [ -n "$last_commit_time" ] && lg+=" · ${C_GRAY}${last_commit_time}${C_RESET}"
-        [ -n "$commits_today" ] && lg+=" · ${C_GREEN}${commits_today} today${C_RESET}"
-        lg+="$extras"
-        out_lines+=("$lg"); out_types+=("s")
-    else
-        local lg="◈ ${dir}${extras}"
-        out_lines+=("$lg"); out_types+=("s")
+    if [ ${#config_parts[@]} -gt 0 ]; then
+        [ -n "$dev_cfg" ] && dev_cfg+=" · "
+        dev_cfg+="$(IFS=' '; echo "${config_parts[*]}")"
     fi
 
-    # --- Dev line (optional) ---
-    local dev_info=""
-    [ -n "$prog_lang" ] && dev_info+="$prog_lang"
-    if [ -n "$package_manager" ]; then
-        [ -n "$dev_info" ] && dev_info+=" · "
-        dev_info+="$package_manager"
-    fi
-    if [ -n "$running_servers" ]; then
-        [ -n "$dev_info" ] && dev_info+=" · "
-        dev_info+="${C_GREEN}${running_servers}${C_RESET}"
-    fi
-    [ -n "$dev_info" ] && { out_lines+=("$dev_info"); out_types+=("n"); }
+    # Append sections with ┊ separators
+    [ -n "$stats_sec" ] && l2+="${SEP}${stats_sec}"
+    [ -n "$dev_cfg" ] && l2+="${SEP}${dev_cfg}"
 
-    # --- Tools line (only when active) ---
+    out_lines+=("$l2"); out_types+=("n")
+
+    # --- Dynamic lines: Tools, Agents, Todos (only when active) ---
     local running_tools_count completed_tools_output
     running_tools_count=$(echo "$running_tools_json" | jq 'length' 2>/dev/null || echo "0")
     completed_tools_output=""
@@ -1988,7 +1999,6 @@ main() {
         out_lines+=("$lt"); out_types+=("n")
     fi
 
-    # --- Agents line (only when active) ---
     local running_agents_count
     running_agents_count=$(echo "$running_agents_json" | jq 'length' 2>/dev/null || echo "0")
 
@@ -2013,7 +2023,6 @@ main() {
         out_lines+=("$la"); out_types+=("n")
     fi
 
-    # --- Todos line (only when active) ---
     local todos_count
     todos_count=$(echo "$todos_json" | jq 'length' 2>/dev/null || echo "0")
 
@@ -2040,16 +2049,14 @@ main() {
         out_lines+=("$ltodo"); out_types+=("n")
     fi
 
-    # --- Render with box-drawing gutter ---
+    # --- Render with rounded box-drawing gutter ---
     local total=${#out_lines[@]}
     for ((i=0; i<total; i++)); do
         local gutter
         if [ $i -eq 0 ]; then
-            gutter="${C_GRAY}┌${C_RESET}"
+            gutter="${C_GRAY}╭${C_RESET}"
         elif [ $i -eq $((total - 1)) ]; then
-            gutter="${C_GRAY}└${C_RESET}"
-        elif [ "${out_types[$i]}" = "s" ]; then
-            gutter="${C_GRAY}├${C_RESET}"
+            gutter="${C_GRAY}╰${C_RESET}"
         else
             gutter="${C_GRAY}│${C_RESET}"
         fi
