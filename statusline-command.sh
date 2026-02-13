@@ -871,68 +871,113 @@ calculate_cost() {
         # OpenAI GPT-5 family
         *"gpt-5.2"*)
             input_price=1.75; output_price=14.00
-            cache_creation_price=0.175; cache_read_price=0.175 ;;
+            cache_read_price=0.175 ;;
         *"gpt-5.1"*)
             input_price=1.25; output_price=10.00
-            cache_creation_price=0.125; cache_read_price=0.125 ;;
+            cache_read_price=0.125 ;;
         *"gpt-5"*)
             if [[ "$model_id" == *"mini"* ]]; then
                 input_price=0.25; output_price=2.00
-                cache_creation_price=0.025; cache_read_price=0.025
+                cache_read_price=0.025
             elif [[ "$model_id" == *"nano"* ]]; then
                 input_price=0.05; output_price=0.40
-                cache_creation_price=0.005; cache_read_price=0.005
+                cache_read_price=0.005
             else
                 input_price=1.25; output_price=10.00
-                cache_creation_price=0.125; cache_read_price=0.125
+                cache_read_price=0.125
             fi ;;
 
-        # OpenAI GPT-4 family
+        # OpenAI GPT-4.1 family
+        *"gpt-4.1"*)
+            if [[ "$model_id" == *"nano"* ]]; then
+                input_price=0.10; output_price=0.40
+                cache_read_price=0.025
+            elif [[ "$model_id" == *"mini"* ]]; then
+                input_price=0.40; output_price=1.60
+                cache_read_price=0.10
+            else
+                input_price=2.00; output_price=8.00
+                cache_read_price=0.50
+            fi ;;
+
+        # OpenAI GPT-4o family
+        *"gpt-4o"*"mini"*|*"gpt-4-o"*"mini"*)
+            input_price=0.15; output_price=0.60
+            cache_read_price=0.075 ;;
         *"gpt-4o"*|*"gpt-4-o"*)
-            input_price=5.00; output_price=15.00
-            cache_creation_price=5.00; cache_read_price=2.50 ;;
+            input_price=2.50; output_price=10.00
+            cache_read_price=1.25 ;;
         *"gpt-4"*)
             input_price=30.00; output_price=60.00 ;;
         *"gpt-3.5"*)
             input_price=0.50; output_price=1.50 ;;
 
-        # Claude family
-        *"opus-4"*|*"opus-4.5"*)
+        # OpenAI o-series
+        *"o4"*"mini"*)
+            input_price=1.10; output_price=4.40
+            cache_read_price=0.275 ;;
+        *"o3"*"mini"*)
+            input_price=1.10; output_price=4.40
+            cache_read_price=0.55 ;;
+        *"o3"*)
+            input_price=2.00; output_price=8.00
+            cache_read_price=0.50 ;;
+
+        # Claude family - Opus 4.5+ ($5/$25)
+        *"opus-4-5"*|*"opus-4-6"*|*"opus-4.5"*|*"opus-4.6"*)
             input_price=5.00; output_price=25.00
             cache_creation_price=6.25; cache_read_price=0.50 ;;
-        *"sonnet-4"*|*"sonnet-4.5"*|*"20241022"*)
-            input_price=3.00; output_price=15.00
-            cache_creation_price=3.75; cache_read_price=0.30 ;;
-        *"haiku-4"*|*"haiku-4.5"*)
-            input_price=0.80; output_price=4.00
-            cache_creation_price=1.00; cache_read_price=0.08 ;;
+        # Claude family - Opus 4/4.1 and older ($15/$75)
         *"opus"*)
             input_price=15.00; output_price=75.00
             cache_creation_price=18.75; cache_read_price=1.50 ;;
+        # Claude family - Sonnet (all versions $3/$15)
         *"sonnet"*)
             input_price=3.00; output_price=15.00
             cache_creation_price=3.75; cache_read_price=0.30 ;;
+        # Claude family - Haiku 4.5 ($1/$5)
+        *"haiku-4"*|*"haiku-4.5"*)
+            input_price=1.00; output_price=5.00
+            cache_creation_price=1.25; cache_read_price=0.10 ;;
+        # Claude family - Haiku 3.5 ($0.80/$4)
+        *"3-5-haiku"*|*"3.5-haiku"*|*"haiku-3-5"*|*"haiku-3.5"*)
+            input_price=0.80; output_price=4.00
+            cache_creation_price=1.00; cache_read_price=0.08 ;;
+        # Claude family - Haiku 3 ($0.25/$1.25)
         *"haiku"*)
             input_price=0.25; output_price=1.25
             cache_creation_price=0.30; cache_read_price=0.03 ;;
 
         # Gemini family
-        *"gemini-2.5"*|*"2.5-pro"*)
-            input_price=1.25; output_price=10.00 ;;
+        *"gemini-3"*"pro"*)
+            input_price=2.00; output_price=12.00
+            cache_read_price=0.20 ;;
+        *"gemini-3"*"flash"*)
+            input_price=0.50; output_price=3.00
+            cache_read_price=0.05 ;;
+        *"gemini-2.5"*"pro"*|*"2.5-pro"*)
+            input_price=1.25; output_price=10.00
+            cache_read_price=0.125 ;;
+        *"gemini-2.5"*"flash"*"lite"*)
+            input_price=0.10; output_price=0.40
+            cache_read_price=0.01 ;;
+        *"gemini-2.5"*"flash"*|*"2.5-flash"*)
+            input_price=0.30; output_price=2.50
+            cache_read_price=0.03 ;;
+        *"gemini-2.0"*"flash"*"lite"*)
+            input_price=0.075; output_price=0.30 ;;
         *"gemini-2.0"*|*"2.0-flash"*)
-            input_price=0.10; output_price=0.40 ;;
+            input_price=0.10; output_price=0.40
+            cache_read_price=0.025 ;;
         *"gemini-1.5-pro"*|*"1.5-pro"*)
             input_price=1.25; output_price=5.00 ;;
         *"gemini-1.5-flash"*|*"1.5-flash"*)
             input_price=0.075; output_price=0.30 ;;
 
-        # DeepSeek family
-        *"deepseek"*"reasoner"*|*"deepseek"*"r1"*)
-            input_price=0.55; output_price=2.19
-            cache_creation_price=0.55; cache_read_price=0.14 ;;
+        # DeepSeek family (V3.2 unified pricing)
         *"deepseek"*)
-            input_price=0.27; output_price=1.10
-            cache_creation_price=0.27; cache_read_price=0.07 ;;
+            input_price=0.28; output_price=0.42
+            cache_creation_price=0.28; cache_read_price=0.028 ;;
 
         # Kimi / Moonshot AI family
         *"kimi"*"k2"*|*"moonshot"*"k2"*)
