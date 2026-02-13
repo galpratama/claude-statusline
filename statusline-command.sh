@@ -261,7 +261,7 @@ format_model_name() {
         local mode="${BASH_REMATCH[4]}"
         tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
         if [ "$mode" = "thinking" ]; then
-            mode="💡"
+            mode="◉"
         else
             mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
         fi
@@ -272,6 +272,14 @@ format_model_name() {
         local major="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local tier="${BASH_REMATCH[3]}"
+        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        echo "${tier} ${major}.${minor}"
+
+    # Handle Claude model names with suffixes (e.g., claude-opus-4-6-thinking)
+    elif [[ "$clean_name" =~ claude-(opus|sonnet|haiku)-([0-9])-([0-9])-(thinking|extended) ]]; then
+        local tier="${BASH_REMATCH[1]}"
+        local major="${BASH_REMATCH[2]}"
+        local minor="${BASH_REMATCH[3]}"
         tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
         echo "${tier} ${major}.${minor}"
 
@@ -1828,7 +1836,7 @@ main() {
     # ========================================================================
 
     # Line 1: Cost info
-    printf "  💰"
+    printf "   ❖"
     printf " ${C_YELLOW}%s${C_RESET}" "$final_cost_display"
     printf " · %s · %s" "$provider_section" "$model"
     printf " · %s" "$duration"
@@ -1845,13 +1853,13 @@ main() {
 
     # MCP, Rules, Hooks counts
     local config_parts=()
-    [ "$SHOW_CLAUDE_MD" = "true" ] && [ "$claude_md_count" -gt 0 ] && config_parts+=("📋 ${claude_md_count}")
-    [ "$SHOW_RULES" = "true" ] && [ "$rules_count" -gt 0 ] && config_parts+=("📜 ${rules_count}")
+    [ "$SHOW_CLAUDE_MD" = "true" ] && [ "$claude_md_count" -gt 0 ] && config_parts+=("📝 ${claude_md_count}")
+    [ "$SHOW_RULES" = "true" ] && [ "$rules_count" -gt 0 ] && config_parts+=("§ ${rules_count}")
     [ "$SHOW_MCP_SERVERS" = "true" ] && [ "$mcp_servers_count" -gt 0 ] && config_parts+=("🔌 ${mcp_servers_count}")
-    [ "$SHOW_HOOKS" = "true" ] && [ "$hooks_count_new" -gt 0 ] && config_parts+=("🪝 ${hooks_count_new}")
+    [ "$SHOW_HOOKS" = "true" ] && [ "$hooks_count_new" -gt 0 ] && config_parts+=("⚓ ${hooks_count_new}")
 
     if [ ${#config_parts[@]} -gt 0 ]; then
-        printf " · ${C_GRAY}%s${C_RESET}" "$(IFS=' '; echo "${config_parts[*]}")"
+        printf " · ${C_WHITE}%s${C_RESET}" "$(IFS=' '; echo "${config_parts[*]}")"
     fi
 
     # Lines changed
@@ -1867,8 +1875,8 @@ main() {
 
     # Session statistics
     local stats_parts=()
-    [ "$tool_calls_count" -gt 0 ] && stats_parts+=("🔧 $tool_calls_count")
-    [ "$files_edited_count" -gt 0 ] && stats_parts+=("✏ $files_edited_count")
+    [ "$tool_calls_count" -gt 0 ] && stats_parts+=("⚙ $tool_calls_count")
+    [ "$files_edited_count" -gt 0 ] && stats_parts+=("✎ $files_edited_count")
     [ "$bash_commands_count" -gt 0 ] && stats_parts+=("⚡ $bash_commands_count")
 
     if [ ${#stats_parts[@]} -gt 0 ]; then
@@ -1876,12 +1884,12 @@ main() {
     fi
 
     # Folder if not git
-    [ -z "$git_info" ] && printf " · 📁 %s" "$dir"
+    [ -z "$git_info" ] && printf " · ◈ %s" "$dir"
     printf "\n"
 
     # Line 2: Git info
     if [ -n "$git_info" ]; then
-        printf "  📁 %s %s" "$dir" "$git_info"
+        printf "  ◈ %s %s" "$dir" "$git_info"
         [ -n "$last_commit_time" ] && printf " · ${C_GRAY}%s${C_RESET}" "$last_commit_time"
         [ -n "$commits_today" ] && printf " · ${C_GREEN}%s today" "$commits_today"
         printf "\n"
@@ -1899,7 +1907,7 @@ main() {
         dev_info+="${C_GREEN}${running_servers}${C_RESET}"
     fi
 
-    [ -n "$dev_info" ] && printf "  🔧 %b\n" "$dev_info"
+    [ -n "$dev_info" ] && printf "  ◆ %b\n" "$dev_info"
 
     # Line 4: Tools activity (running + completed counts)
     local running_tools_count completed_tools_output

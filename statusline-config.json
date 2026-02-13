@@ -63,25 +63,5 @@
     "theme": "default"
   },
   "subscriptions": {
-    "Claude": {
-      "type": "monthly",
-      "renewal_date": "2025-12-22"
-    },
-    "Kiro": {
-      "type": "monthly",
-      "renewal_date": "2026-01-01"
-    },
-    "MiniMax": {
-      "type": "monthly",
-      "renewal_date": "2025-12-29"
-    },
-    "GLM": {
-      "type": "yearly",
-      "renewal_date": "2026-12-13"
-    },
-    "Kimi": {
-      "type": "monthly",
-      "renewal_date": "2025-12-30"
-    }
   }
 }

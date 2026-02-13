@@ -3,5 +3,9 @@
     "allow": [
       "Bash(bash:*)"
     ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
   }
 }
