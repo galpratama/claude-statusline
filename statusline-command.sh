@@ -1890,7 +1890,7 @@ main() {
     l1+=" · ${C_GRAY}${duration}${C_RESET}"
     l1+=" · ${C_CYAN}${message_count} msg${C_RESET}"
 
-    local tok_sec="${C_CYAN}↑$(format_k "$total_input")${C_RESET} ${C_PURPLE}↓$(format_k "$total_output")${C_RESET}"
+    local tok_sec="${C_CYAN}↑ $(format_k "$total_input")${C_RESET} ${C_PURPLE}↓ $(format_k "$total_output")${C_RESET}"
     [ "$context_usage_pct" -gt 0 ] && tok_sec+=" · ${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
     l1+="${SEP}${tok_sec}"
 
