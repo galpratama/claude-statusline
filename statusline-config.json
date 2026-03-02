@@ -63,6 +63,11 @@
     "theme": "default"
   },
   "subscriptions": {
+    "Alibaba Cloud": {
+      "type": "monthly",
+      "renewal_date": "2026-04-02",
+      "renewal_day": "2"
+    },
     "GLM": {
       "type": "yearly",
       "renewal_date": "2027-02-01"

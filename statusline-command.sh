@@ -459,6 +459,24 @@ format_model_name() {
     elif [[ "$clean_name" =~ qwen3-max ]]; then
         echo "Qwen3 Max"
 
+    # Handle Qwen3 Coder variants (new patterns for Alibaba Cloud)
+    elif [[ "$clean_name" =~ qwen3-coder-next ]]; then
+        echo "Qwen3 Coder Next"
+    elif [[ "$clean_name" =~ qwen3-coder-plus ]]; then
+        echo "Qwen3 Coder Plus"
+    elif [[ "$clean_name" =~ qwen3-coder ]]; then
+        echo "Qwen3 Coder"
+
+    # Handle Qwen3 Max with date suffix (e.g., qwen3-max-2026-01-23)
+    elif [[ "$clean_name" =~ qwen3-max-[0-9]{8} ]]; then
+        echo "Qwen3 Max"
+
+    # Handle Qwen3.5 variants (e.g., qwen3.5-plus)
+    elif [[ "$clean_name" =~ qwen([0-9]+\.[0-9]+)-plus ]]; then
+        echo "Qwen ${BASH_REMATCH[1]} Plus"
+    elif [[ "$clean_name" =~ qwen([0-9]+)-plus ]]; then
+        echo "Qwen${BASH_REMATCH[1]} Plus"
+
     # Handle Qwen3 size-based models
     elif [[ "$clean_name" =~ qwen3-([0-9]+)b ]]; then
         echo "Qwen3 ${BASH_REMATCH[1]}B"
@@ -484,6 +502,14 @@ format_model_name() {
         fi
 
     # Handle Kimi/Moonshot K2 models
+    elif [[ "$clean_name" =~ kimi-k([0-9])\.([0-9])-(thinking|instruct)(-[0-9]+)? ]]; then
+        local version="${BASH_REMATCH[1]}"
+        local minor="${BASH_REMATCH[2]}"
+        local mode="${BASH_REMATCH[3]}"
+        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        echo "Kimi K${version}.${minor} ${mode}"
+    elif [[ "$clean_name" =~ kimi-k([0-9])\.([0-9]) ]]; then
+        echo "Kimi K${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     elif [[ "$clean_name" =~ kimi-k2-(thinking|instruct)(-[0-9]+)? ]]; then
         local mode="${BASH_REMATCH[1]}"
         mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
@@ -535,8 +561,14 @@ format_model_name() {
         echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     elif [[ "$clean_name" =~ glm-([0-9])\.([0-9])-air ]]; then
         echo "GLM ${BASH_REMATCH[1]}.${BASH_REMATCH[2]} Air"
+    elif [[ "$clean_name" =~ glm-5 ]]; then
+        echo "GLM 5"
+    elif [[ "$clean_name" =~ glm-4\.7 ]]; then
+        echo "GLM 4.7"
 
     # Handle MiniMax models
+    elif [[ "$clean_name" =~ minimax-m([0-9])\.([0-9]) ]]; then
+        echo "MiniMax M${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     elif [[ "$clean_name" =~ minimax-m([0-9]) ]]; then
         echo "MiniMax M${BASH_REMATCH[1]}"
 
@@ -979,7 +1011,29 @@ calculate_cost() {
             input_price=0.28; output_price=0.42
             cache_creation_price=0.28; cache_read_price=0.028 ;;
 
-        # Kimi / Moonshot AI family
+        # Qwen / Alibaba Cloud family
+        *"qwen3.5-plus"*|*"qwen3-5-plus"*)
+            input_price=0.35; output_price=1.20
+            cache_creation_price=0.35; cache_read_price=0.035 ;;
+        *"qwen3-max"*)
+            input_price=0.50; output_price=2.00
+            cache_creation_price=0.50; cache_read_price=0.05 ;;
+        *"qwen3-coder"*)
+            input_price=0.25; output_price=0.75
+            cache_creation_price=0.25; cache_read_price=0.025 ;;
+        *"qwen3"*)
+            input_price=0.20; output_price=0.60
+            cache_creation_price=0.20; cache_read_price=0.02 ;;
+        *"qwq"*)
+            input_price=0.15; output_price=0.45
+            cache_creation_price=0.15; cache_read_price=0.015 ;;
+        *"qwen"*)
+            input_price=0.14; output_price=0.14 ;;
+
+        # Kimi / Moonshot AI family (Alibaba Cloud)
+        *"kimi"*"k2.5"*|*"kimi-k2.5"*)
+            input_price=0.20; output_price=3.00
+            cache_creation_price=0.20; cache_read_price=0.02 ;;
         *"kimi"*"k2"*|*"moonshot"*"k2"*)
             input_price=0.15; output_price=2.50 ;;
         *"moonshot"*"128k"*)
@@ -989,7 +1043,13 @@ calculate_cost() {
         *"moonshot"*"8k"*)
             input_price=0.17; output_price=0.17 ;;
 
-        # GLM (Zhipu AI) family
+        # GLM (Zhipu AI) family (Alibaba Cloud)
+        *"glm-5"*)
+            input_price=0.28; output_price=1.12
+            cache_creation_price=0.28; cache_read_price=0.028 ;;
+        *"glm-4.7"*)
+            input_price=0.14; output_price=0.28
+            cache_creation_price=0.14; cache_read_price=0.014 ;;
         *"glm-4.6"*|*"glm-4-plus"*)
             input_price=0.84; output_price=0.84 ;;
         *"glm-4.5"*|*"glm-4.5-air"*)
@@ -997,7 +1057,10 @@ calculate_cost() {
         *"glm"*)
             input_price=0.14; output_price=0.14 ;;
 
-        # MiniMax AI family
+        # MiniMax AI family (Alibaba Cloud)
+        *"minimax-m2.5"*|*"m2.5"*)
+            input_price=0.35; output_price=1.40
+            cache_creation_price=0.40; cache_read_price=0.035 ;;
         *"minimax"*"m2"*|*"m2"*)
             input_price=0.30; output_price=1.20
             cache_creation_price=0.375; cache_read_price=0.03 ;;

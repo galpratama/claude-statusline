@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(bash:*)"
+      "Bash(bash:*)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:ai.google.dev)",
+      "WebFetch(domain:openai.com)",
+      "WebFetch(domain:api-docs.deepseek.com)",
+      "mcp__exa-ai__web_search_exa",
+      "WebFetch(domain:claude.com)",
+      "mcp__exa-ai__crawling_exa"
     ]
   },
   "sandbox": {
