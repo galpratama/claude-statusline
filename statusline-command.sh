@@ -123,6 +123,41 @@ get_cache_file() {
     echo "/tmp/claude-cache-${session_id}-${key}"
 }
 
+# --- Cross-platform date/stat helpers (BSD/macOS vs GNU/Linux) ---
+case "$(uname -s)" in
+    Darwin) _OS_FLAVOR="bsd" ;;
+    *)      _OS_FLAVOR="gnu" ;;
+esac
+
+# File modification time as epoch seconds
+_stat_mtime() {
+    if [ "$_OS_FLAVOR" = "bsd" ]; then
+        stat -f %m "$1" 2>/dev/null || echo 0
+    else
+        stat -c %Y "$1" 2>/dev/null || echo 0
+    fi
+}
+
+# Parse a date/datetime string to epoch seconds
+# usage: _date_to_epoch "<bsd_input_format>" "<value>"
+_date_to_epoch() {
+    if [ "$_OS_FLAVOR" = "bsd" ]; then
+        date -j -f "$1" "$2" +%s 2>/dev/null
+    else
+        date -d "$2" +%s 2>/dev/null
+    fi
+}
+
+# Format an epoch to a given strftime spec
+# usage: _epoch_to_fmt "<epoch>" "+%m"
+_epoch_to_fmt() {
+    if [ "$_OS_FLAVOR" = "bsd" ]; then
+        date -j -f "%s" "$1" "$2" 2>/dev/null
+    else
+        date -d "@$1" "$2" 2>/dev/null
+    fi
+}
+
 is_cache_valid() {
     local cache_file="$1"
     local ttl="$2"
@@ -130,7 +165,7 @@ is_cache_valid() {
     [[ "$ENABLE_CACHING" != "true" ]] && return 1
     [ ! -f "$cache_file" ] && return 1
 
-    local cache_age=$(($(date +%s) - $(stat -f %m "$cache_file" 2>/dev/null || echo 0)))
+    local cache_age=$(($(date +%s) - $(_stat_mtime "$cache_file")))
     [ "$cache_age" -lt "$ttl" ]
 }
 
@@ -1108,29 +1143,29 @@ get_subscription_info() {
     [ -z "$subscription_type" ] || [ -z "$renewal_date" ] && return
 
     local renewal_timestamp expiry_timestamp label="↻"
-    renewal_timestamp=$(date -j -f "%Y-%m-%d" "$renewal_date" +%s 2>/dev/null)
+    renewal_timestamp=$(_date_to_epoch "%Y-%m-%d" "$renewal_date")
 
     case "$subscription_type" in
         "monthly")
             while [ "$renewal_timestamp" -lt "$current_timestamp" ]; do
                 local current_month current_year next_month next_year day_of_month
-                current_month=$(date -j -f "%s" "$renewal_timestamp" +%m 2>/dev/null)
-                current_year=$(date -j -f "%s" "$renewal_timestamp" +%Y 2>/dev/null)
+                current_month=$(_epoch_to_fmt "$renewal_timestamp" +%m)
+                current_year=$(_epoch_to_fmt "$renewal_timestamp" +%Y)
                 next_month=$((10#$current_month + 1))
                 next_year=$current_year
                 [ $next_month -gt 12 ] && { next_month=1; next_year=$((next_year + 1)); }
                 next_month=$(printf "%02d" $next_month)
                 day_of_month=${renewal_day:-$(echo "$renewal_date" | cut -d'-' -f3)}
-                renewal_timestamp=$(date -j -f "%Y-%m-%d" "${next_year}-${next_month}-${day_of_month}" +%s 2>/dev/null)
+                renewal_timestamp=$(_date_to_epoch "%Y-%m-%d" "${next_year}-${next_month}-${day_of_month}")
             done
             expiry_timestamp=$renewal_timestamp ;;
         "yearly")
             while [ "$renewal_timestamp" -lt "$current_timestamp" ]; do
                 local current_year next_year month_day
-                current_year=$(date -j -f "%s" "$renewal_timestamp" +%Y 2>/dev/null)
+                current_year=$(_epoch_to_fmt "$renewal_timestamp" +%Y)
                 next_year=$((current_year + 1))
                 month_day=$(echo "$renewal_date" | cut -d'-' -f2-)
-                renewal_timestamp=$(date -j -f "%Y-%m-%d" "${next_year}-${month_day}" +%s 2>/dev/null)
+                renewal_timestamp=$(_date_to_epoch "%Y-%m-%d" "${next_year}-${month_day}")
             done
             expiry_timestamp=$renewal_timestamp ;;
         *) return ;;
@@ -1539,7 +1574,8 @@ format_elapsed_time() {
 
     # Parse ISO timestamp to epoch
     local start_epoch
-    start_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S" "${start_timestamp%%.*}" +%s 2>/dev/null || echo "0")
+    start_epoch=$(_date_to_epoch "%Y-%m-%dT%H:%M:%S" "${start_timestamp%%.*}" || echo "0")
+    [ -z "$start_epoch" ] && start_epoch="0"
 
     if [ "$start_epoch" -eq 0 ]; then
         echo ""
@@ -1667,7 +1703,7 @@ get_git_metrics() {
     fi
 
     local today_start commit_count
-    today_start=$(date -j -f "%Y-%m-%d %H:%M:%S" "$(date +%Y-%m-%d) 00:00:00" +%s 2>/dev/null)
+    today_start=$(_date_to_epoch "%Y-%m-%d %H:%M:%S" "$(date +%Y-%m-%d) 00:00:00")
     if [ -n "$today_start" ]; then
         commit_count=$(git -C "$dir" log --since="$today_start" --oneline 2>/dev/null | wc -l | tr -d ' ')
         [ "$commit_count" -gt 0 ] && commits_today="✓ ${commit_count}"
