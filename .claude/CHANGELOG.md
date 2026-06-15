@@ -29,3 +29,6 @@ New functions in `statusline-command.sh`: `format_rate_window`, `format_rate_lim
 - Fixed a pre-existing `format_k` bug where whole thousands/millions lost a
   trailing zero (e.g. `200000` → `20k` instead of `200k`). The trailing-zero
   strip now only applies after a decimal point.
+- Removed the `↑ <input> ↓ <output>` token counters from line 1 — now redundant
+  with the `N% ctx (used/total)` figures. The context section is omitted (no
+  dangling separator) when usage data isn't available yet.

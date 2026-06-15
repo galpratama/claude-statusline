@@ -2045,12 +2045,12 @@ main() {
     l1+=" · ${C_GRAY}${duration}${C_RESET}"
     l1+=" · ${C_CYAN}${message_count} msg${C_RESET}"
 
-    local tok_sec="${C_CYAN}↑ $(format_k "$total_input")${C_RESET} ${C_PURPLE}↓ $(format_k "$total_output")${C_RESET}"
+    local tok_sec=""
     if [ "$context_usage_pct" -gt 0 ]; then
-        tok_sec+=" · ${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
+        tok_sec+="${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
         tok_sec+=" ${C_GRAY}($(format_k "$current_total_tokens")/$(format_k "$context_size"))${C_RESET}"
     fi
-    l1+="${SEP}${tok_sec}"
+    [ -n "$tok_sec" ] && l1+="${SEP}${tok_sec}"
 
     [ -n "$rate_limit_section" ] && l1+="${SEP}${rate_limit_section}"
 
