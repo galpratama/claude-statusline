@@ -94,14 +94,14 @@ format_k() {
         local millions
         millions=$(awk -v n="$num" 'BEGIN { printf "%.2f", n/1000000 }')
         # Remove trailing zeros and decimal point if needed
-        millions=$(echo "$millions" | sed 's/\.00$//' | sed 's/\([0-9]\)0$/\1/' | sed 's/\.$//')
+        millions=$(echo "$millions" | sed 's/\.00$//' | sed 's/\(\.[0-9]\)0$/\1/' | sed 's/\.$//')
         echo "${millions}M"
     elif [ "$num" -ge 1000 ]; then
         # Use awk instead of bc for better reliability
         local thousands
         thousands=$(awk -v n="$num" 'BEGIN { printf "%.2f", n/1000 }')
         # Remove trailing zeros and decimal point if needed
-        thousands=$(echo "$thousands" | sed 's/\.00$//' | sed 's/\([0-9]\)0$/\1/' | sed 's/\.$//')
+        thousands=$(echo "$thousands" | sed 's/\.00$//' | sed 's/\(\.[0-9]\)0$/\1/' | sed 's/\.$//')
         echo "${thousands}k"
     else
         echo "$num"
@@ -1751,6 +1751,58 @@ format_duration() {
 }
 
 # ============================================================================
+# CLAUDE USAGE (RATE LIMITS)
+# ============================================================================
+
+# Format a single rate-limit window (5h or 7d) into a colored segment.
+# Echoes nothing when the window is absent (non-subscribers / pre-first-response).
+format_rate_window() {
+    local label="$1" path="$2" input="$3" now="$4"
+
+    local pct
+    pct=$(echo "$input" | jq -r "${path}.used_percentage // empty" 2>/dev/null)
+    [ -z "$pct" ] && return
+    pct=${pct%.*}
+    [[ ! "$pct" =~ ^[0-9]+$ ]] && return
+
+    local color="${C_GREEN}"
+    if [ "$pct" -ge 90 ]; then
+        color="${C_RED}"
+    elif [ "$pct" -ge 70 ]; then
+        color="${C_YELLOW}"
+    fi
+
+    local seg="${label} ${color}${pct}%${C_RESET}"
+
+    local resets
+    resets=$(echo "$input" | jq -r "${path}.resets_at // empty" 2>/dev/null)
+    if [[ "$resets" =~ ^[0-9]+$ ]] && [ "$resets" -gt "$now" ]; then
+        seg+=" ${C_GRAY}($(format_duration "$now" "$resets"))${C_RESET}"
+    fi
+
+    printf '%s' "$seg"
+}
+
+# Build the Claude usage segment from .rate_limits. Echoes nothing when no
+# window data is present, so the caller can append it unconditionally.
+format_rate_limits() {
+    local input="$1" now="$2"
+
+    local five seven out=""
+    five=$(format_rate_window "5h" ".rate_limits.five_hour" "$input" "$now")
+    seven=$(format_rate_window "7d" ".rate_limits.seven_day" "$input" "$now")
+
+    [ -n "$five" ] && out+="$five"
+    if [ -n "$seven" ]; then
+        [ -n "$out" ] && out+=" · "
+        out+="$seven"
+    fi
+
+    [ -z "$out" ] && return
+    printf '%s %s' "${C_GRAY}◴${C_RESET}" "$out"
+}
+
+# ============================================================================
 # MAIN SCRIPT
 # ============================================================================
 
@@ -1818,6 +1870,10 @@ main() {
     session_start=$(cat "$session_file")
     current_time=$(date +%s)
     duration=$(format_duration "$session_start" "$current_time")
+
+    # Claude usage (5h / 7d rate limits) — only present for Pro/Max subscribers
+    local rate_limit_section=""
+    [ "$SHOW_RATE_LIMIT" = "true" ] && rate_limit_section=$(format_rate_limits "$input" "$current_time")
 
     # Message count tracking
     local prev_total current_total message_count
@@ -1907,14 +1963,14 @@ main() {
     [ "$cache_total" -gt 0 ] && [ "$total_input" -gt 0 ] && cache_efficiency=$((cache_read_tokens * 100 / total_input))
 
     # Calculate context window usage percentage
-    local context_usage_pct=0 context_usage_color="${C_GREEN}"
+    local context_usage_pct=0 context_usage_color="${C_GREEN}" current_total_tokens=0
     if [ "$context_size" -gt 0 ]; then
         # Ensure numeric values
         [[ ! "$current_input" =~ ^[0-9]+$ ]] && current_input=0
         [[ ! "$current_cache_creation" =~ ^[0-9]+$ ]] && current_cache_creation=0
         [[ ! "$current_cache_read" =~ ^[0-9]+$ ]] && current_cache_read=0
 
-        local current_total_tokens=$((current_input + current_cache_creation + current_cache_read))
+        current_total_tokens=$((current_input + current_cache_creation + current_cache_read))
         if [ "$current_total_tokens" -gt 0 ]; then
             context_usage_pct=$((current_total_tokens * 100 / context_size))
 
@@ -1989,9 +2045,14 @@ main() {
     l1+=" · ${C_GRAY}${duration}${C_RESET}"
     l1+=" · ${C_CYAN}${message_count} msg${C_RESET}"
 
-    local tok_sec="${C_CYAN}↑ $(format_k "$total_input")${C_RESET} ${C_PURPLE}↓ $(format_k "$total_output")${C_RESET}"
-    [ "$context_usage_pct" -gt 0 ] && tok_sec+=" · ${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
-    l1+="${SEP}${tok_sec}"
+    local tok_sec=""
+    if [ "$context_usage_pct" -gt 0 ]; then
+        tok_sec+="${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
+        tok_sec+=" ${C_GRAY}($(format_k "$current_total_tokens")/$(format_k "$context_size"))${C_RESET}"
+    fi
+    [ -n "$tok_sec" ] && l1+="${SEP}${tok_sec}"
+
+    [ -n "$rate_limit_section" ] && l1+="${SEP}${rate_limit_section}"
 
     out_lines+=("$l1"); out_types+=("n")
 
