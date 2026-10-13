@@ -1743,6 +1743,20 @@ get_plan_label() {
     cat "$cache_file" 2>/dev/null
 }
 
+# Honcho memory activity for this session, written by locally patched Honcho hooks to
+# ~/.honcho/status-<session_id>.json: ←recalled conclusions (last prompt) ↑captured tool events ✓saved messages
+format_honcho_status() {
+    local status_file="${HOME}/.honcho/status-${1}.json"
+    [ -n "$1" ] && [ -f "$status_file" ] || return
+    local recalled captured saved seg="🧠"
+    { read -r recalled; read -r captured; read -r saved; } < <(
+        jq -r '(.recalled // ""), (.captured // ""), (.saved // "")' "$status_file" 2>/dev/null)
+    [[ "$recalled" =~ ^[0-9]+$ ]] && seg+=" ${C_PURPLE}←${recalled}${C_RESET}"
+    [[ "$captured" =~ ^[0-9]+$ ]] && seg+=" ${C_GRAY}↑${captured}${C_RESET}"
+    [[ "$saved" =~ ^[0-9]+$ ]] && seg+=" ${C_GRAY}✓${saved}${C_RESET}"
+    [ "$seg" != "🧠" ] && printf '%s' "$seg"
+}
+
 # Prompt cache: hit ratio plus time until the cache goes cold (an idle-cost warning)
 format_prompt_cache() {
     local hit_pct="$1" expires_at="$2" warm="$3" now="$4"
@@ -2097,6 +2111,9 @@ main() {
     [ "$SHOW_RULES" = "true" ] && [ "$rules_count" -gt 0 ] && config_parts+=("§ ${rules_count}")
     [ "$SHOW_MCP_SERVERS" = "true" ] && [ "$mcp_servers_count" -gt 0 ] && config_parts+=("🔌 ${mcp_servers_count}")
     [ "$SHOW_HOOKS" = "true" ] && [ "$hooks_count_new" -gt 0 ] && config_parts+=("⚓ ${hooks_count_new}")
+    local honcho_section
+    honcho_section=$(format_honcho_status "$session_id")
+    [ -n "$honcho_section" ] && config_parts+=("$honcho_section")
     if [ ${#config_parts[@]} -gt 0 ]; then
         [ -n "$dev_cfg" ] && dev_cfg+=" · "
         dev_cfg+="$(IFS=' '; echo "${config_parts[*]}")"

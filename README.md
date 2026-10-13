@@ -448,6 +448,7 @@ This controls what the statusline displays and how it behaves. See [Customizatio
 - Prompt cache hit ratio and time until the cache goes cold
 - 5-hour and 7-day usage limits with reset countdowns
 - Message count, MCP servers count
+- Honcho memory activity (`🧠 ←5 ↑24 ✓12`: conclusions recalled for the last prompt, tool events captured, messages saved), read from `~/.honcho/status-<session_id>.json`. Upstream Honcho doesn't write this file; it needs a local patch to its hooks
 
 ### Live Activity
 - Running tool with target and elapsed time
