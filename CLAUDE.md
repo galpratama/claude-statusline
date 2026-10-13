@@ -10,34 +10,42 @@ This is a custom statusline for Claude Code that displays AI model information, 
 
 ### Core Files
 
-- **statusline-command.sh** - Main script (~1475 lines) that generates the status display. Reads JSON input from stdin containing session data, processes it, and outputs formatted statusline text with ANSI colors.
+- **statusline-command.sh** - Main script that generates the status display. Reads JSON input from stdin containing session data, processes it, and outputs formatted statusline text with ANSI colors.
 - **statusline-config.json** - Configuration file controlling display segments, monitored ports, and subscription tracking.
 
 ### Data Flow
 
 1. Claude Code pipes JSON session data to the statusline script via stdin
-2. Script parses JSON using `jq` to extract: model info, token counts, costs, MCP servers, tools
-3. Script detects local environment: git status, running servers, package managers, languages
-4. Outputs 2-4 lines of formatted text with ANSI color codes
+2. `main()` reads every input field in ONE `jq` call (order of the `read` list must match the jq output list)
+3. `parse_transcript()` scans the session JSONL for running tools, subagents, todos and completed-tool counts
+4. Script detects local environment: git status, running servers, package managers, languages
+5. Outputs 2-5 lines of formatted text with ANSI color codes
 
-### Key Script Sections
+### Key Functions (find with `grep -n "^name() {"`)
 
-- **Lines 17-70**: Configuration loading from JSON with defaults
-- **Lines 80-97**: Color definitions (centralized)
-- **Lines 100-137**: Caching utilities for expensive operations
-- **Lines 140-320**: Input parsing and session tracking
-- **Lines 325-415**: Language/package manager detection
-- **Lines 433-519**: Server detection (netstat/lsof)
-- **Lines 521-736**: Cost calculation with model-specific pricing
-- **Lines 850-950**: Git information gathering
-- **Lines 1080-1194**: Subscription expiration calculation
+- `load_config` - all segment toggles in one `jq` call over `~/.claude/statusline-config.json`
+- `parse_transcript` - only `tool_use` lines are JSON-parsed; `tool_result` IDs are pulled by regex (tool output is most of a transcript's bytes). Uses `rg` via `_tsearch` when available, BSD grep is ~20x slower on big transcripts
+- Subagents: `Agent` (and legacy `Task`) tool uses. Background agents get an immediate "Async agent launched" result and count as running until a `<task-notification>` with their `<tool-use-id>` appears
+- `get_git_info` / `get_git_metrics` - one `git status --porcelain=v2 --branch` plus `log -1` and `rev-list --count --since=midnight`
+- `format_rate_limits`, `format_prompt_cache` - render `.rate_limits` and `.prompt_cache` from the input
+- `calculate_cost` - only used when the input has no `.cost.total_cost_usd`
+
+### Input fields used
+
+`model`, `effort.level`, `fast_mode`, `thinking.enabled`, `session_name`, `cost.*`, `context_window.*` (incl. `used_percentage`), `prompt_cache.{warm,hit_ratio,expires_at}`, `rate_limits.{five_hour,seven_day}`, `transcript_path`, `workspace.current_dir`.
+
+Transcript timestamps are UTC; parse them with `TZ=UTC` (see `format_elapsed_time`).
 
 ## Testing
 
-Test the statusline manually:
+Test the statusline manually (capture a real input first by temporarily adding
+`printf '%s' "$input" > /tmp/statusline-debug.json` after `input=$(cat)` in `main`):
 ```bash
 bash ~/Scripts/claude-statusline/statusline-command.sh < /tmp/statusline-debug.json
 ```
+
+Time it with `/usr/bin/time -p`. Profile per line with
+`PS4='+ $EPOCHREALTIME $LINENO ' /opt/homebrew/bin/bash -x statusline-command.sh < input.json 2> trace.txt`.
 
 Or run directly (will use empty/default values):
 ```bash
@@ -74,9 +82,10 @@ The script looks for config in two locations:
 
 - **bash** - Standard bash shell
 - **jq** - JSON processor (required)
+- **rg** - ripgrep, optional but much faster transcript scanning
 - **git** - For git status (optional)
 - **lsof** or **netstat** - For server detection
-- **bc** - For cost calculations
+- **bc** - Only for the fallback cost estimate
 
 ## Installation Path
 

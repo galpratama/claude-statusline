@@ -52,21 +52,6 @@ color_print() {
     esac
 }
 
-# Get JSON value with default fallback
-# Usage: json_get "$json" ".path.to.value" "default"
-json_get() {
-    local json="$1"
-    local path="$2"
-    local default="${3:-}"
-    local result
-    result=$(echo "$json" | jq -r "$path // empty" 2>/dev/null)
-    if [ -z "$result" ] || [ "$result" = "null" ]; then
-        echo "$default"
-    else
-        echo "$result"
-    fi
-}
-
 # Get JSON value from file with default fallback
 json_file_get() {
     local file="$1"
@@ -1608,57 +1593,49 @@ format_elapsed_time() {
 # GIT INFORMATION
 # ============================================================================
 
+_git() {
+    git -C "$GIT_DIR_ARG" -c core.fileMode=false --no-optional-locks "$@" 2>/dev/null
+}
+
+# One `git status --porcelain=v2 --branch` call gives branch, upstream sync and changes
 get_git_info() {
-    local dir="$1"
+    local GIT_DIR_ARG="$1"
+    local porcelain
+    porcelain=$(_git status --porcelain=v2 --branch) || return
 
-    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return
+    local branch="" has_upstream="" ahead=0 behind=0 status="" added=0 removed=0
+    local line xy
+    while IFS= read -r line; do
+        case "$line" in
+            "# branch.head "*)     branch=${line#"# branch.head "} ;;
+            "# branch.upstream "*) has_upstream=1 ;;
+            "# branch.ab "*)
+                read -r _ _ ahead behind <<< "$line"
+                ahead=${ahead#+}; behind=${behind#-} ;;
+            "1 "*|"2 "*|"u "*)
+                status="*"
+                xy=${line:2:2}
+                [ "${xy:0:1}" = "A" ] && added=$((added + 1))
+                [[ "$xy" == *D* ]] && removed=$((removed + 1)) ;;
+            "? "*) added=$((added + 1)) ;;
+        esac
+    done <<< "$porcelain"
+    [ "$branch" = "(detached)" ] && branch="detached"
 
-    local branch status file_changes sync_indicator git_info
-    branch=$(git -C "$dir" -c core.fileMode=false --no-optional-locks branch --show-current 2>/dev/null || echo "detached")
-
-    # Check uncommitted changes
-    if ! git -C "$dir" -c core.fileMode=false --no-optional-locks diff --quiet 2>/dev/null || \
-       ! git -C "$dir" -c core.fileMode=false --no-optional-locks diff --cached --quiet 2>/dev/null; then
-        status="*"
-    fi
-
-    # File change counts
-    local git_status added removed
-    git_status=$(git -C "$dir" -c core.fileMode=false --no-optional-locks status --porcelain 2>/dev/null)
-    if [ -n "$git_status" ]; then
-        added=$(echo "$git_status" | grep -c -E "^A|^\?\?" 2>/dev/null || echo "0")
-        removed=$(echo "$git_status" | grep -c -E "^ D|^D" 2>/dev/null || echo "0")
-        added=${added//[^0-9]/}
-        removed=${removed//[^0-9]/}
-        [ -z "$added" ] && added=0
-        [ -z "$removed" ] && removed=0
-        if [ "$added" -gt 0 ] || [ "$removed" -gt 0 ]; then
-            file_changes=" "
-            [ "$added" -gt 0 ] && file_changes+="+${added}"
-            [ "$removed" -gt 0 ] && file_changes+="-${removed}"
+    local sync_indicator=""
+    if [ -n "$has_upstream" ]; then
+        if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
+            sync_indicator="↕${ahead}↓${behind}"
+        elif [ "$ahead" -gt 0 ]; then
+            sync_indicator="↑${ahead}"
+        elif [ "$behind" -gt 0 ]; then
+            sync_indicator="↓${behind}"
+        else
+            sync_indicator="="
         fi
     fi
 
-    # Sync status
-    if [ "$branch" != "detached" ]; then
-        local remote_branch ahead behind
-        remote_branch=$(git -C "$dir" -c core.fileMode=false --no-optional-locks rev-parse --abbrev-ref @{upstream} 2>/dev/null)
-        if [ -n "$remote_branch" ]; then
-            ahead=$(git -C "$dir" -c core.fileMode=false --no-optional-locks rev-list --count @{upstream}..HEAD 2>/dev/null || echo "0")
-            behind=$(git -C "$dir" -c core.fileMode=false --no-optional-locks rev-list --count HEAD..@{upstream} 2>/dev/null || echo "0")
-            if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
-                sync_indicator="↕${ahead}↓${behind}"
-            elif [ "$ahead" -gt 0 ]; then
-                sync_indicator="↑${ahead}"
-            elif [ "$behind" -gt 0 ]; then
-                sync_indicator="↓${behind}"
-            else
-                sync_indicator="="
-            fi
-        fi
-    fi
-
-    # Build output
+    local git_info
     git_info=$(printf "⎇  ${C_CYAN}%s${C_RESET}" "$branch")
     [ -n "$status" ] && git_info+=$(printf " ${C_YELLOW}%s" "$status")
 
@@ -1671,24 +1648,22 @@ get_git_info() {
         esac
     fi
 
-    if [ -n "$file_changes" ]; then
+    if [ "$added" -gt 0 ] || [ "$removed" -gt 0 ]; then
         git_info+="  "
-        [[ "$file_changes" =~ \+([0-9]+) ]] && git_info+=$(printf "${C_GREEN}+%s" "${BASH_REMATCH[1]}")
-        [[ "$file_changes" =~ \+([0-9]+) ]] && [[ "$file_changes" =~ -([0-9]+) ]] && git_info+=" "
-        [[ "$file_changes" =~ -([0-9]+) ]] && git_info+=$(printf "${C_RED}-%s" "${BASH_REMATCH[1]}")
+        [ "$added" -gt 0 ] && git_info+=$(printf "${C_GREEN}+%s" "$added")
+        [ "$added" -gt 0 ] && [ "$removed" -gt 0 ] && git_info+=" "
+        [ "$removed" -gt 0 ] && git_info+=$(printf "${C_RED}-%s" "$removed")
     fi
 
     echo "$git_info"
 }
 
 get_git_metrics() {
-    local dir="$1"
+    local GIT_DIR_ARG="$1"
     local current_time="$2"
 
-    git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return
-
-    local last_commit_epoch time_diff hours days minutes last_commit_time commits_today
-    last_commit_epoch=$(git -C "$dir" log -1 --format=%ct 2>/dev/null)
+    local last_commit_epoch time_diff hours days minutes last_commit_time="" commits_today=""
+    last_commit_epoch=$(_git log -1 --format=%ct) || return
 
     if [ -n "$last_commit_epoch" ]; then
         time_diff=$((current_time - last_commit_epoch))
@@ -1707,13 +1682,10 @@ get_git_metrics() {
                 last_commit_time="just now"
             fi
         fi
-    fi
 
-    local today_start commit_count
-    today_start=$(_date_to_epoch "%Y-%m-%d %H:%M:%S" "$(date +%Y-%m-%d) 00:00:00")
-    if [ -n "$today_start" ]; then
-        commit_count=$(git -C "$dir" log --since="$today_start" --oneline 2>/dev/null | wc -l | tr -d ' ')
-        [ "$commit_count" -gt 0 ] && commits_today="✓ ${commit_count}"
+        local commit_count
+        commit_count=$(_git rev-list --count --since=midnight HEAD)
+        [ "${commit_count:-0}" -gt 0 ] && commits_today="✓ ${commit_count}"
     fi
 
     echo "${last_commit_time}|${commits_today}"
@@ -1809,6 +1781,36 @@ format_rate_limits() {
     printf '%s %s' "${C_GRAY}◴${C_RESET}" "$out"
 }
 
+# Prompt cache: hit ratio plus time until the cache goes cold (an idle-cost warning)
+format_prompt_cache() {
+    local hit_pct="$1" expires_at="$2" warm="$3" now="$4"
+    [ -z "$hit_pct" ] && [ -z "$warm" ] && return
+
+    if [ "$warm" = "false" ] || { [[ "$expires_at" =~ ^[0-9]+$ ]] && [ "$expires_at" -le "$now" ]; }; then
+        printf '%s' "${C_GRAY}cache${C_RESET} ${C_YELLOW}cold${C_RESET}"
+        return
+    fi
+
+    local seg="${C_GRAY}cache${C_RESET}"
+    if [[ "$hit_pct" =~ ^[0-9]+$ ]]; then
+        local color="${C_GREEN}"
+        if [ "$hit_pct" -lt 70 ]; then
+            color="${C_RED}"
+        elif [ "$hit_pct" -lt 90 ]; then
+            color="${C_YELLOW}"
+        fi
+        seg+=" ${color}${hit_pct}%${C_RESET}"
+    fi
+
+    if [[ "$expires_at" =~ ^[0-9]+$ ]]; then
+        local left=$((expires_at - now)) left_color="${C_GRAY}"
+        [ "$left" -le 300 ] && left_color="${C_YELLOW}"
+        seg+=" ${left_color}($(format_duration "$now" "$expires_at"))${C_RESET}"
+    fi
+
+    printf '%s' "$seg"
+}
+
 # ============================================================================
 # MAIN SCRIPT
 # ============================================================================
@@ -1827,6 +1829,7 @@ main() {
     local current_input current_cache_creation current_cache_read
     local mcp_servers_count tools_count cache_creation_tokens cache_read_tokens
     local json_tool_calls json_files_edited json_bash_commands transcript_path effort_level
+    local native_ctx_pct cache_hit_pct cache_expires_at cache_warm fast_mode thinking_on session_name
     {
         IFS= read -r current_dir; IFS= read -r model_raw; IFS= read -r model_id
         IFS= read -r total_input; IFS= read -r total_output; IFS= read -r context_size
@@ -1838,6 +1841,8 @@ main() {
         IFS= read -r cache_creation_tokens; IFS= read -r cache_read_tokens
         IFS= read -r json_tool_calls; IFS= read -r json_files_edited; IFS= read -r json_bash_commands
         IFS= read -r transcript_path; IFS= read -r effort_level
+        IFS= read -r native_ctx_pct; IFS= read -r cache_hit_pct; IFS= read -r cache_expires_at
+        IFS= read -r cache_warm; IFS= read -r fast_mode; IFS= read -r thinking_on; IFS= read -r session_name
     } < <(printf '%s' "$input" | jq -Rrs '
         (fromjson? // {}) as $in | $in |
         def v(p; d): ((p // d) | tostring);
@@ -1852,7 +1857,11 @@ main() {
         (.mcp_servers // [] | length), (.tools // [] | length),
         v(.context_window.cache_creation_input_tokens; "0"), v(.context_window.cache_read_input_tokens; "0"),
         v(.stats.tool_calls; ""), v(.stats.files_edited; ""), v(.stats.bash_commands; ""),
-        v(.transcript_path; ""), v(.effort.level; "")
+        v(.transcript_path; ""), v(.effort.level; ""),
+        v(.context_window.used_percentage | numbers | floor; ""),
+        v(.prompt_cache.hit_ratio | numbers | . * 100 | floor; ""), v(.prompt_cache.expires_at | numbers | floor; ""),
+        (.prompt_cache.warm | if . == null then "" else tostring end), v(.fast_mode; ""), v(.thinking.enabled; ""),
+        v(.session_name | strings | gsub("[\n\t]"; " "); "")
     ' 2>/dev/null)
     model=$(format_model_name "$model_raw")
     : "${mcp_servers_count:=0}" "${tools_count:=0}"
@@ -1955,9 +1964,9 @@ main() {
     [ -z "$todos_json" ] && todos_json="[]"
     [ -z "$completed_counts_json" ] && completed_counts_json="[]"
 
-    # Calculate cost
-    local session_cost
-    session_cost=$(calculate_cost "$provider_name" "$model_id" "$total_input" "$total_output" "$cache_creation_tokens" "$cache_read_tokens")
+    # Estimate cost only when Claude Code doesn't report it
+    local session_cost="$json_cost"
+    [ -z "$session_cost" ] && session_cost=$(calculate_cost "$provider_name" "$model_id" "$total_input" "$total_output" "$cache_creation_tokens" "$cache_read_tokens")
 
     # Cache efficiency
     local cache_total cache_efficiency=0
@@ -1974,7 +1983,12 @@ main() {
 
         current_total_tokens=$((current_input + current_cache_creation + current_cache_read))
         if [ "$current_total_tokens" -gt 0 ]; then
-            context_usage_pct=$((current_total_tokens * 100 / context_size))
+            # Prefer Claude Code's own percentage; it knows about reserved/autocompact space
+            if [[ "$native_ctx_pct" =~ ^[0-9]+$ ]]; then
+                context_usage_pct=$native_ctx_pct
+            else
+                context_usage_pct=$((current_total_tokens * 100 / context_size))
+            fi
 
             # Color based on usage
             if [ "$context_usage_pct" -ge 90 ]; then
@@ -2007,30 +2021,17 @@ main() {
         provider_section=$(printf "${C_CYAN}%s${C_RESET}" "$provider_name")
     fi
 
-    # Determine cost display
-    local final_cost_display final_cost_color
-    if [ -n "$json_cost" ]; then
-        final_cost_display=$(printf "\$%.2f" "$json_cost" 2>/dev/null || echo "\$0.00")
-        local cost_value
-        cost_value=$(echo "$json_cost" | bc 2>/dev/null || echo "0")
-        if [ $(echo "$cost_value >= 1.00" | bc 2>/dev/null || echo "0") -eq 1 ]; then
-            final_cost_color="${C_RED}"
-        elif [ $(echo "$cost_value >= 0.10" | bc 2>/dev/null || echo "0") -eq 1 ]; then
-            final_cost_color="${C_YELLOW}"
-        else
-            final_cost_color="${C_GREEN}"
-        fi
+    # Determine cost display (integer cents avoids bc for the thresholds)
+    local final_cost_display final_cost_color cost_cents
+    final_cost_display=$(printf '$%.2f' "${session_cost:-0}" 2>/dev/null) || final_cost_display='$0.00'
+    cost_cents=${final_cost_display//[^0-9]/}
+    cost_cents=$((10#${cost_cents:-0}))
+    if [ "$cost_cents" -ge 100 ]; then
+        final_cost_color="${C_RED}"
+    elif [ "$cost_cents" -ge 10 ]; then
+        final_cost_color="${C_YELLOW}"
     else
-        final_cost_display=$(printf "\$%.2f" "$session_cost" 2>/dev/null || echo "\$0.00")
-        local cost_value
-        cost_value=$(echo "$session_cost" | bc 2>/dev/null || echo "0")
-        if [ $(echo "$cost_value >= 1.00" | bc 2>/dev/null || echo "0") -eq 1 ]; then
-            final_cost_color="${C_RED}"
-        elif [ $(echo "$cost_value >= 0.10" | bc 2>/dev/null || echo "0") -eq 1 ]; then
-            final_cost_color="${C_YELLOW}"
-        else
-            final_cost_color="${C_GREEN}"
-        fi
+        final_cost_color="${C_GREEN}"
     fi
 
     # ========================================================================
@@ -2052,6 +2053,8 @@ main() {
         esac
         l1+=" ${effort_color}◆ ${effort_level}${C_RESET}"
     fi
+    [ "$fast_mode" = "true" ] && l1+=" ${C_YELLOW}↯ fast${C_RESET}"
+    [ "$thinking_on" = "true" ] && l1+=" ${C_GRAY}✻${C_RESET}"
     l1+=" · ${provider_section}"
     l1+=" · ${final_cost_color}${final_cost_display}${C_RESET}"
     l1+=" · ${C_GRAY}${duration}${C_RESET}"
@@ -2064,12 +2067,21 @@ main() {
     fi
     [ -n "$tok_sec" ] && l1+="${SEP}${tok_sec}"
 
+    local cache_section
+    cache_section=$(format_prompt_cache "$cache_hit_pct" "$cache_expires_at" "$cache_warm" "$current_time")
+    [ -n "$cache_section" ] && l1+="${SEP}${cache_section}"
+
     [ -n "$rate_limit_section" ] && l1+="${SEP}${rate_limit_section}"
 
     out_lines+=("$l1"); out_types+=("n")
 
     # --- Line 2: Git/folder + changes  ┊  Stats  ┊  Dev + Config ---
     local l2=""
+    if [ -n "$session_name" ]; then
+        local short_name="$session_name"
+        [ ${#short_name} -gt 32 ] && short_name="${short_name:0:31}…"
+        l2+="${C_PURPLE}◇ ${short_name}${C_RESET}${SEP}"
+    fi
 
     # Section 1: Git or folder + lines changed
     if [ -n "$git_info" ]; then
