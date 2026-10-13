@@ -182,42 +182,39 @@ write_cache() {
 # ============================================================================
 
 load_config() {
-    if [ -f "$CONFIG_FILE" ]; then
-        CACHE_TTL=$(json_file_get "$CONFIG_FILE" '.performance.cache_ttl' "$DEFAULT_CACHE_TTL")
-        ENABLE_CACHING=$(json_file_get "$CONFIG_FILE" '.performance.enable_caching' "true")
-
-        # AI segment toggles
-        SHOW_PROVIDER=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_provider' "true")
-        SHOW_MODEL=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_model' "true")
-        SHOW_COST=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_cost' "true")
-        SHOW_CACHE_EFFICIENCY=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_cache_efficiency' "true")
-        SHOW_RATE_LIMIT=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_rate_limit' "true")
-        SHOW_MESSAGE_COUNT=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_message_count' "true")
-        SHOW_MCP_SERVERS=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_mcp_servers' "true")
-        SHOW_TOOLS=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_tools_count' "true")
-
-        # Git segment toggles
-        SHOW_GIT=$(json_file_get "$CONFIG_FILE" '.segments.git.enabled' "true")
-        SHOW_LAST_COMMIT=$(json_file_get "$CONFIG_FILE" '.segments.git.show_last_commit' "true")
-        SHOW_COMMITS_TODAY=$(json_file_get "$CONFIG_FILE" '.segments.git.show_commits_today' "true")
-
-        # Dev segment toggles
-        SHOW_DEV=$(json_file_get "$CONFIG_FILE" '.segments.dev.enabled' "true")
-        SHOW_LANGUAGE=$(json_file_get "$CONFIG_FILE" '.segments.dev.show_language' "true")
-        SHOW_PACKAGE_MANAGER=$(json_file_get "$CONFIG_FILE" '.segments.dev.show_package_manager' "true")
-        SHOW_SERVERS=$(json_file_get "$CONFIG_FILE" '.segments.dev.show_running_servers' "true")
-
-        # Feature toggles
-        CLAUDE_STATUSLINE_LINT=$(json_file_get "$CONFIG_FILE" '.features.lint_checking' "false")
-        CLAUDE_STATUSLINE_SERVERS=$(json_file_get "$CONFIG_FILE" '.features.server_detection' "true")
-
-        # New feature toggles (from claude-hud)
-        SHOW_RULES=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_rules' "true")
-        SHOW_HOOKS=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_hooks' "true")
-        SHOW_CLAUDE_MD=$(json_file_get "$CONFIG_FILE" '.segments.ai.show_claude_md' "true")
-        SHOW_RUNNING_TOOLS=$(json_file_get "$CONFIG_FILE" '.segments.tools.enabled' "true")
-        SHOW_AGENTS=$(json_file_get "$CONFIG_FILE" '.segments.agents.enabled' "true")
-        SHOW_TODOS=$(json_file_get "$CONFIG_FILE" '.segments.todos.enabled' "true")
+    local config_values
+    # One jq call for all settings; order must match the read list below
+    if [ -f "$CONFIG_FILE" ] && config_values=$(jq -r --arg ttl "$DEFAULT_CACHE_TTL" '
+        def v(p; d): (p | if . == null then d else tostring end);
+        v(.performance.cache_ttl; $ttl), v(.performance.enable_caching; "true"),
+        v(.segments.ai.show_provider; "true"), v(.segments.ai.show_model; "true"),
+        v(.segments.ai.show_cost; "true"), v(.segments.ai.show_cache_efficiency; "true"),
+        v(.segments.ai.show_rate_limit; "true"), v(.segments.ai.show_message_count; "true"),
+        v(.segments.ai.show_mcp_servers; "true"), v(.segments.ai.show_tools_count; "true"),
+        v(.segments.git.enabled; "true"), v(.segments.git.show_last_commit; "true"),
+        v(.segments.git.show_commits_today; "true"),
+        v(.segments.dev.enabled; "true"), v(.segments.dev.show_language; "true"),
+        v(.segments.dev.show_package_manager; "true"), v(.segments.dev.show_running_servers; "true"),
+        v(.features.lint_checking; "false"), v(.features.server_detection; "true"),
+        v(.segments.ai.show_rules; "true"), v(.segments.ai.show_hooks; "true"),
+        v(.segments.ai.show_claude_md; "true"), v(.segments.tools.enabled; "true"),
+        v(.segments.agents.enabled; "true"), v(.segments.todos.enabled; "true")
+    ' "$CONFIG_FILE" 2>/dev/null); then
+        {
+            read -r CACHE_TTL; read -r ENABLE_CACHING
+            read -r SHOW_PROVIDER; read -r SHOW_MODEL
+            read -r SHOW_COST; read -r SHOW_CACHE_EFFICIENCY
+            read -r SHOW_RATE_LIMIT; read -r SHOW_MESSAGE_COUNT
+            read -r SHOW_MCP_SERVERS; read -r SHOW_TOOLS
+            read -r SHOW_GIT; read -r SHOW_LAST_COMMIT
+            read -r SHOW_COMMITS_TODAY
+            read -r SHOW_DEV; read -r SHOW_LANGUAGE
+            read -r SHOW_PACKAGE_MANAGER; read -r SHOW_SERVERS
+            read -r CLAUDE_STATUSLINE_LINT; read -r CLAUDE_STATUSLINE_SERVERS
+            read -r SHOW_RULES; read -r SHOW_HOOKS
+            read -r SHOW_CLAUDE_MD; read -r SHOW_RUNNING_TOOLS
+            read -r SHOW_AGENTS; read -r SHOW_TODOS
+        } <<< "$config_values"
     else
         # Defaults when no config file
         CACHE_TTL=$DEFAULT_CACHE_TTL
@@ -1482,61 +1479,48 @@ parse_transcript() {
 
     [ ! -f "$transcript_path" ] && return
 
-    # Parse JSONL and extract tool_use/tool_result blocks
-    # Output format: JSON with tools, agents, todos arrays
-    local tools_json agents_json todos_json
-
-    # Use jq to process the JSONL file
-    # Extract all tool_use and tool_result blocks with their IDs and timestamps
-    local parsed
-    parsed=$(cat "$transcript_path" 2>/dev/null | while IFS= read -r line; do
-        echo "$line" | jq -c '
-            select(.message.content != null) |
-            .timestamp as $ts |
-            .message.content[] |
+    # Single jq pass over the whole JSONL; fromjson? skips a partially-written last line
+    jq -nRc '
+        [inputs | fromjson? | select(.message.content? | type == "array") |
+            .timestamp as $ts | .message.content[] |
             select(.type == "tool_use" or .type == "tool_result") |
-            {type: .type, id: .id, tool_use_id: .tool_use_id, name: .name, input: .input, is_error: .is_error, timestamp: $ts}
-        ' 2>/dev/null
-    done)
+            {type, id, tool_use_id, name, input, is_error, timestamp: $ts}] as $blocks
+        | ([$blocks[] | select(.type == "tool_result" and .tool_use_id != null) | {key: .tool_use_id, value: true}] | from_entries) as $done
+        | [$blocks[] | select(.type == "tool_use") | .done = ($done[.id // ""] // false)] as $uses
+        | {
+            running_tools: [$uses[] | select(.done | not) | select(.name != "TodoWrite") | del(.done)],
+            running_agents: [$uses[] | select(.name == "Task" and (.done | not)) | del(.done)],
+            todos: ([$uses[] | select(.name == "TodoWrite")] | last | .input.todos // []),
+            completed_counts: ([$uses[] | select(.done and .name != "TodoWrite" and .name != "Task")]
+                | group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count))
+          }
+    ' "$transcript_path" > "$result_file" 2>/dev/null
+}
 
-    # Build running tools list (tool_use without matching tool_result)
-    local tool_uses tool_results running_tools completed_counts
+# mcp__plugin_honcho_honcho__get_config -> honcho:get_config
+short_tool_name() {
+    local name="$1"
+    if [[ "$name" != mcp__* ]]; then
+        printf '%s' "$name"
+        return
+    fi
+    name=${name#mcp__}
+    local server=${name%%__*} tool=${name#*__}
+    server=${server#plugin_}
+    server=${server#claude_ai_}
+    [[ "$server" == *_* && "${server%%_*}" == "${server#*_}" ]] && server=${server%%_*}
+    printf '%s:%s' "$server" "$tool"
+}
 
-    # Get all tool_use entries
-    tool_uses=$(echo "$parsed" | jq -sc '[.[] | select(.type == "tool_use")]' 2>/dev/null)
-
-    # Get all tool_result entries
-    tool_results=$(echo "$parsed" | jq -sc '[.[] | select(.type == "tool_result") | .tool_use_id]' 2>/dev/null)
-
-    # Find running tools (tool_use IDs not in tool_results)
-    running_tools=$(echo "$tool_uses" | jq -c --argjson completed "$tool_results" '
-        [.[] | select(.id as $id | ($completed | index($id)) == null) | select(.name != "TodoWrite")]
-    ' 2>/dev/null)
-
-    # Find running agents (Task tool calls that are still running)
-    local running_agents
-    running_agents=$(echo "$tool_uses" | jq -c --argjson completed "$tool_results" '
-        [.[] | select(.name == "Task") | select(.id as $id | ($completed | index($id)) == null)]
-    ' 2>/dev/null)
-
-    # Get latest todos from last TodoWrite call
-    local latest_todos
-    latest_todos=$(echo "$tool_uses" | jq -c '
-        [.[] | select(.name == "TodoWrite")] | last | .input.todos // []
-    ' 2>/dev/null)
-
-    # Count completed tools by name
-    local completed_tool_uses
-    completed_tool_uses=$(echo "$tool_uses" | jq -c --argjson completed "$tool_results" '
-        [.[] | select(.id as $id | ($completed | index($id)) != null) | select(.name != "TodoWrite" and .name != "Task")]
-    ' 2>/dev/null)
-
-    completed_counts=$(echo "$completed_tool_uses" | jq -c '
-        group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count)
-    ' 2>/dev/null)
-
-    # Write results to temp file
-    echo "{\"running_tools\": $running_tools, \"running_agents\": $running_agents, \"todos\": $latest_todos, \"completed_counts\": $completed_counts}" > "$result_file"
+# 10-cell bar for a 0-100 percentage
+make_bar() {
+    local pct=$1 filled i bar=""
+    [ "$pct" -gt 100 ] && pct=100
+    filled=$(( (pct + 5) / 10 ))
+    for ((i = 0; i < 10; i++)); do
+        if [ "$i" -lt "$filled" ]; then bar+="▰"; else bar+="▱"; fi
+    done
+    printf '%s' "$bar"
 }
 
 format_tool_target() {
@@ -1574,7 +1558,8 @@ format_elapsed_time() {
 
     # Parse ISO timestamp to epoch
     local start_epoch
-    start_epoch=$(_date_to_epoch "%Y-%m-%dT%H:%M:%S" "${start_timestamp%%.*}" || echo "0")
+    # Transcript timestamps are UTC ("...Z"); parse them as UTC, not local time
+    start_epoch=$(TZ=UTC _date_to_epoch "%Y-%m-%dT%H:%M:%S" "${start_timestamp%%.*}" || echo "0")
     [ -z "$start_epoch" ] && start_epoch="0"
 
     if [ "$start_epoch" -eq 0 ]; then
@@ -1814,48 +1799,50 @@ main() {
     local input
     input=$(cat)
 
-    # Parse basic values
+    # Parse all input fields in one jq call; order must match the read list below
     local current_dir model_raw model_id model total_input total_output context_size session_id
-    current_dir=$(json_get "$input" '.workspace.current_dir' "")
-    model_raw=$(json_get "$input" '.model.display_name' "")
-    model_id=$(json_get "$input" '.model.id' "")
+    local json_cost json_duration lines_added lines_removed
+    local current_input current_cache_creation current_cache_read
+    local mcp_servers_count tools_count cache_creation_tokens cache_read_tokens
+    local json_tool_calls json_files_edited json_bash_commands transcript_path
+    {
+        IFS= read -r current_dir; IFS= read -r model_raw; IFS= read -r model_id
+        IFS= read -r total_input; IFS= read -r total_output; IFS= read -r context_size
+        IFS= read -r session_id
+        IFS= read -r json_cost; IFS= read -r json_duration
+        IFS= read -r lines_added; IFS= read -r lines_removed
+        IFS= read -r current_input; IFS= read -r current_cache_creation; IFS= read -r current_cache_read
+        IFS= read -r mcp_servers_count; IFS= read -r tools_count
+        IFS= read -r cache_creation_tokens; IFS= read -r cache_read_tokens
+        IFS= read -r json_tool_calls; IFS= read -r json_files_edited; IFS= read -r json_bash_commands
+        IFS= read -r transcript_path
+    } < <(printf '%s' "$input" | jq -Rrs '
+        (fromjson? // {}) as $in | $in |
+        def v(p; d): ((p // d) | tostring);
+        v(.workspace.current_dir; ""), v(.model.display_name; ""), v(.model.id; ""),
+        v(.context_window.total_input_tokens; "0"), v(.context_window.total_output_tokens; "0"),
+        v(.context_window.context_window_size; "0"), v(.session_id; ""),
+        v(.cost.total_cost_usd; ""), v(.cost.total_duration_ms; ""),
+        v(.cost.total_lines_added; "0"), v(.cost.total_lines_removed; "0"),
+        v(.context_window.current_usage.input_tokens; "0"),
+        v(.context_window.current_usage.cache_creation_input_tokens; "0"),
+        v(.context_window.current_usage.cache_read_input_tokens; "0"),
+        (.mcp_servers // [] | length), (.tools // [] | length),
+        v(.context_window.cache_creation_input_tokens; "0"), v(.context_window.cache_read_input_tokens; "0"),
+        v(.stats.tool_calls; ""), v(.stats.files_edited; ""), v(.stats.bash_commands; ""),
+        v(.transcript_path; "")
+    ' 2>/dev/null)
     model=$(format_model_name "$model_raw")
-    total_input=$(json_get "$input" '.context_window.total_input_tokens' "0")
-    total_output=$(json_get "$input" '.context_window.total_output_tokens' "0")
-    context_size=$(json_get "$input" '.context_window.context_window_size' "0")
-    session_id=$(json_get "$input" '.session_id' "")
+    : "${mcp_servers_count:=0}" "${tools_count:=0}"
 
     # Ensure numeric values are valid
     [[ ! "$total_input" =~ ^[0-9]+$ ]] && total_input=0
     [[ ! "$total_output" =~ ^[0-9]+$ ]] && total_output=0
     [[ ! "$context_size" =~ ^[0-9]+$ ]] && context_size=0
 
-    # Extract cost and metrics
-    local json_cost json_duration lines_added lines_removed
-    json_cost=$(json_get "$input" '.cost.total_cost_usd' "")
-    json_duration=$(json_get "$input" '.cost.total_duration_ms' "")
-    lines_added=$(json_get "$input" '.cost.total_lines_added' "0")
-    lines_removed=$(json_get "$input" '.cost.total_lines_removed' "0")
-
-    # Extract current usage context window data
-    local current_input current_cache_creation current_cache_read
-    current_input=$(json_get "$input" '.context_window.current_usage.input_tokens' "0")
-    current_cache_creation=$(json_get "$input" '.context_window.current_usage.cache_creation_input_tokens' "0")
-    current_cache_read=$(json_get "$input" '.context_window.current_usage.cache_read_input_tokens' "0")
-
-    # Extract MCP and tools info
-    local mcp_servers_count tools_count
-    mcp_servers_count=$(echo "$input" | jq -r '.mcp_servers // [] | length' 2>/dev/null || echo "0")
-    tools_count=$(echo "$input" | jq -r '.tools // [] | length' 2>/dev/null || echo "0")
-
     if [ "$mcp_servers_count" -eq 0 ] && [ -f "$HOME/.claude/.claude.json" ]; then
         mcp_servers_count=$(jq -r '.mcpServers // {} | length' "$HOME/.claude/.claude.json" 2>/dev/null || echo "0")
     fi
-
-    # Cache tokens
-    local cache_creation_tokens cache_read_tokens
-    cache_creation_tokens=$(json_get "$input" '.context_window.cache_creation_input_tokens' "0")
-    cache_read_tokens=$(json_get "$input" '.context_window.cache_read_input_tokens' "0")
 
     # Provider
     local provider_name="${CLAUDE_PROVIDER:-Claude}"
@@ -1900,12 +1887,7 @@ main() {
     [ ! -f "$stats_files_file" ] && echo "0" > "$stats_files_file"
     [ ! -f "$stats_bash_file" ] && echo "0" > "$stats_bash_file"
 
-    local json_tool_calls json_files_edited json_bash_commands
     local tool_calls_count files_edited_count bash_commands_count
-
-    json_tool_calls=$(json_get "$input" '.stats.tool_calls' "")
-    json_files_edited=$(json_get "$input" '.stats.files_edited' "")
-    json_bash_commands=$(json_get "$input" '.stats.bash_commands' "")
 
     tool_calls_count=${json_tool_calls:-$(cat "$stats_tool_calls_file" 2>/dev/null || echo "0")}
     files_edited_count=${json_files_edited:-$(cat "$stats_files_file" 2>/dev/null || echo "0")}
@@ -1932,18 +1914,16 @@ main() {
     [ "$mcp_servers_count" -eq 0 ] && mcp_servers_count="$mcp_count_new"
 
     # Parse transcript for tools, agents, todos
-    local transcript_path transcript_result_file
-    transcript_path=$(json_get "$input" '.transcript_path' "")
+    local transcript_result_file
     transcript_result_file="/tmp/claude-transcript-result-${session_id}"
 
     local running_tools_json running_agents_json todos_json completed_counts_json
     if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
         parse_transcript "$transcript_path" "$transcript_result_file"
         if [ -f "$transcript_result_file" ]; then
-            running_tools_json=$(jq -c '.running_tools // []' "$transcript_result_file" 2>/dev/null)
-            running_agents_json=$(jq -c '.running_agents // []' "$transcript_result_file" 2>/dev/null)
-            todos_json=$(jq -c '.todos // []' "$transcript_result_file" 2>/dev/null)
-            completed_counts_json=$(jq -c '.completed_counts // []' "$transcript_result_file" 2>/dev/null)
+            { IFS= read -r running_tools_json; IFS= read -r running_agents_json
+              IFS= read -r todos_json; IFS= read -r completed_counts_json; } < <(
+                jq -c '.running_tools // [], .running_agents // [], .todos // [], .completed_counts // []' "$transcript_result_file" 2>/dev/null)
         fi
     fi
 
@@ -2047,7 +2027,7 @@ main() {
 
     local tok_sec=""
     if [ "$context_usage_pct" -gt 0 ]; then
-        tok_sec+="${context_usage_color}${context_usage_pct}% ctx${C_RESET}"
+        tok_sec+="${context_usage_color}$(make_bar "$context_usage_pct") ${context_usage_pct}%${C_RESET}"
         tok_sec+=" ${C_GRAY}($(format_k "$current_total_tokens")/$(format_k "$context_size"))${C_RESET}"
     fi
     [ -n "$tok_sec" ] && l1+="${SEP}${tok_sec}"
@@ -2120,16 +2100,16 @@ main() {
     running_tools_count=$(echo "$running_tools_json" | jq 'length' 2>/dev/null || echo "0")
     completed_tools_output=""
 
-    local completed_arr
-    completed_arr=$(echo "$completed_counts_json" | jq -c '.[]' 2>/dev/null)
-    if [ -n "$completed_arr" ]; then
-        while IFS= read -r tool_entry; do
-            local tname tcount
-            tname=$(echo "$tool_entry" | jq -r '.name' 2>/dev/null)
-            tcount=$(echo "$tool_entry" | jq -r '.count' 2>/dev/null)
-            [ -n "$tname" ] && [ "$tcount" -gt 0 ] && completed_tools_output+="✓ ${tname} ×${tcount} "
-        done <<< "$completed_arr"
-    fi
+    # Top 3 completed tools, then "+N" for the rest
+    local tname tcount
+    while IFS=$'\t' read -r tname tcount; do
+        if [ "$tname" = "+" ]; then
+            completed_tools_output+="${C_GRAY}+${tcount}${C_RESET} "
+        elif [ -n "$tname" ]; then
+            completed_tools_output+="✓ $(short_tool_name "$tname") ×${tcount} "
+        fi
+    done < <(jq -r '(.[:3][] | "\(.name)\t\(.count)"), (if length > 3 then "+\t\(length - 3)" else empty end)' \
+        <<< "$completed_counts_json" 2>/dev/null)
 
     if [ "$SHOW_RUNNING_TOOLS" = "true" ] && { [ "$running_tools_count" -gt 0 ] || [ -n "$completed_tools_output" ]; }; then
         local lt=""
@@ -2145,7 +2125,7 @@ main() {
             tool_timestamp=$(echo "$first_running_tool" | jq -r '.timestamp // empty' 2>/dev/null)
             [ -n "$tool_timestamp" ] && elapsed=$(format_elapsed_time "$tool_timestamp" "$current_time")
 
-            lt+="${C_YELLOW}${spinner}${C_RESET} ${tool_name}"
+            lt+="${C_YELLOW}${spinner}${C_RESET} $(short_tool_name "$tool_name")"
             [ -n "$tool_target" ] && lt+=": ${C_CYAN}${tool_target}${C_RESET}"
             [ -n "$elapsed" ] && lt+=" ${C_GRAY}(${elapsed})${C_RESET}"
             [ "$running_tools_count" -gt 1 ] && lt+=" ${C_GRAY}+$((running_tools_count - 1)) more${C_RESET}"
