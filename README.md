@@ -675,6 +675,16 @@ If you use the [Honcho](https://github.com/plastic-labs/claude-honcho) memory pl
 python3 ~/Scripts/claude-statusline/patch-honcho.py
 ```
 
+To make this automatic, register `session-start-hook.sh` as a SessionStart hook in `~/.claude/settings.json`. It runs the patch silently (a message appears only when the plugin was updated and re-patched, or a patch failed) and moves Honcho/statusline per-session files older than 7 days to the Trash:
+
+```json
+"hooks": {
+  "SessionStart": [
+    { "hooks": [{ "type": "command", "command": "/bin/bash $HOME/Scripts/claude-statusline/session-start-hook.sh", "timeout": 30 }] }
+  ]
+}
+```
+
 It finds the newest installed Honcho version, skips patches that are already applied, keeps a `.orig` backup of each file, and restores a file if `node --check` fails. A `!` line means the plugin's code changed and that patch needs updating.
 
 ## Contributing

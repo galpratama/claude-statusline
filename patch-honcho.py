@@ -7,7 +7,9 @@
 Safe to run repeatedly: already-applied patches are skipped. Each file is syntax-checked with
 `node --check` and restored from its .orig backup if the check fails.
 
-Usage: patch-honcho.py [hooks_dir]   (default: newest installed honcho plugin)
+Usage: patch-honcho.py [--hook] [hooks_dir]   (default: newest installed honcho plugin)
+  --hook  silent unless something was patched or failed; then prints a Claude Code
+          {"systemMessage": ...} so it can run as a SessionStart hook.
 """
 import json
 import shutil
@@ -92,46 +94,70 @@ def find_hooks_dir() -> Path:
     return candidates[-1]
 
 
-def patch_file(path: Path, patches) -> bool:
+def write_atomic(path: Path, text: str) -> None:
+    # Another hook may be loading this file right now; never let it see a half-written file
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def patch_file(path: Path, patches, log) -> tuple[bool, bool]:
+    """Returns (ok, changed)."""
     src = path.read_text()
     original = src
     ok = True
     for name, old, new in patches:
         if new in src:
-            print(f"  = {name} (already applied)")
+            log(f"  = {name} (already applied)")
         elif src.count(old) == 1:
             src = src.replace(old, new)
-            print(f"  + {name}")
+            log(f"  + {name}")
         else:
-            print(f"  ! {name}: pattern not found ({src.count(old)} matches), plugin code changed")
+            log(f"  ! {name}: pattern not found ({src.count(old)} matches), plugin code changed")
             ok = False
     if src == original:
-        return ok
+        return ok, False
 
     backup = path.with_name(path.name + ".orig")
     if not backup.exists():
         shutil.copy2(path, backup)
-    path.write_text(src)
+    write_atomic(path, src)
     if subprocess.run(["node", "--check", str(path)], capture_output=True).returncode != 0:
-        path.write_text(original)
-        print(f"  ! syntax check failed, {path.name} restored")
-        return False
-    return ok
+        write_atomic(path, original)
+        log(f"  ! syntax check failed, {path.name} restored")
+        return False, False
+    return ok, True
 
 
 def main() -> int:
-    hooks = Path(sys.argv[1]) if len(sys.argv) > 1 else find_hooks_dir()
-    print(f"Patching {hooks}")
-    all_ok = True
+    args = sys.argv[1:]
+    hook_mode = "--hook" in args
+    args = [a for a in args if a != "--hook"]
+    lines = []
+    log = lines.append if hook_mode else print
+
+    hooks = Path(args[0]) if args else find_hooks_dir()
+    log(f"Patching {hooks}")
+    all_ok, any_changed = True, False
     for name, patches in PATCHES.items():
         path = hooks / name
-        print(name)
+        log(name)
         if not path.exists():
-            print("  ! file missing")
+            log("  ! file missing")
             all_ok = False
             continue
-        all_ok &= patch_file(path, patches)
-    print("Done." if all_ok else "Done with problems; see '!' lines above.")
+        ok, changed = patch_file(path, patches, log)
+        all_ok &= ok
+        any_changed |= changed
+
+    if hook_mode:
+        if not all_ok:
+            problems = "; ".join(l.strip("! ").strip() for l in lines if l.lstrip().startswith("!"))
+            print(json.dumps({"systemMessage": f"patch-honcho: some patches failed ({problems}). Update patch-honcho.py."}))
+        elif any_changed:
+            print(json.dumps({"systemMessage": "patch-honcho: Honcho plugin updated, local patches re-applied."}))
+        return 0
+    log("Done." if all_ok else "Done with problems; see '!' lines above.")
     return 0 if all_ok else 1
 
 
