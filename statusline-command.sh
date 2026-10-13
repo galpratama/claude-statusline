@@ -1479,22 +1479,44 @@ parse_transcript() {
 
     [ ! -f "$transcript_path" ] && return
 
-    # Single jq pass over the whole JSONL; fromjson? skips a partially-written last line
-    jq -nRc '
-        [inputs | fromjson? | select(.message.content? | type == "array") |
-            .timestamp as $ts | .message.content[] |
-            select(.type == "tool_use" or .type == "tool_result") |
-            {type, id, tool_use_id, name, input, is_error, timestamp: $ts}] as $blocks
-        | ([$blocks[] | select(.type == "tool_result" and .tool_use_id != null) | {key: .tool_use_id, value: true}] | from_entries) as $done
-        | [$blocks[] | select(.type == "tool_use") | .done = ($done[.id // ""] // false)] as $uses
+    # Tool outputs are most of a transcript's bytes, so tool_result IDs are pulled with a
+    # regex instead of parsing JSON; only tool_use lines get parsed. fromjson? skips a
+    # partially-written last line. Background agents get an immediate "Async agent launched"
+    # tool_result and only finish once a <task-notification> names their tool-use-id.
+    _tsearch -F '"type":"tool_use"' "$transcript_path" | jq -nRc \
+        --rawfile result_ids <(_tsearch -o '"tool_use_id":"[^"]*"' "$transcript_path") \
+        --rawfile async_lines <(_tsearch -F 'Async agent launched' "$transcript_path") \
+        --rawfile notified_ids <(_tsearch -o '<tool-use-id>[^<]*</tool-use-id>' "$transcript_path") '
+        def is_agent: .name == "Agent" or .name == "Task";
+        def text: if type == "array" then map(.text? // "") | join("") else tostring end;
+        def id_set(s; re): [s | scan(re)[0] | {key: ., value: true}] | from_entries;
+        id_set($result_ids; "\"tool_use_id\":\"([^\"]+)\"") as $results
+        | id_set($notified_ids; "<tool-use-id>([^<]+)</tool-use-id>") as $notified
+        | ([$async_lines | split("\n")[] | fromjson? | .message.content[]?
+            | select(.type? == "tool_result" and (.content | text | startswith("Async agent launched")))
+            | {key: .tool_use_id, value: true}] | from_entries) as $async
+        | [inputs | fromjson? | select(.message.content? | type == "array") |
+            .timestamp as $ts | .message.content[] | select(.type == "tool_use") |
+            {id, name, input, timestamp: $ts} | (.id // "") as $id
+            | .done = (if $async[$id] then $notified[$id] // false else $results[$id] // false end)] as $uses
         | {
-            running_tools: [$uses[] | select(.done | not) | select(.name != "TodoWrite") | del(.done)],
-            running_agents: [$uses[] | select(.name == "Task" and (.done | not)) | del(.done)],
+            running_tools: [$uses[] | select((.done | not) and .name != "TodoWrite" and (is_agent | not)) | del(.done)],
+            running_agents: [$uses[] | select(is_agent and (.done | not)) | del(.done)],
             todos: ([$uses[] | select(.name == "TodoWrite")] | last | .input.todos // []),
-            completed_counts: ([$uses[] | select(.done and .name != "TodoWrite" and .name != "Task")]
+            completed_counts: ([$uses[] | select(.done and .name != "TodoWrite" and (is_agent | not))]
                 | group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count))
           }
-    ' "$transcript_path" > "$result_file" 2>/dev/null
+    ' > "$result_file" 2>/dev/null
+}
+
+# ripgrep is ~20x faster than BSD grep on large transcripts
+_tsearch() {
+    if command -v rg >/dev/null 2>&1; then
+        rg --no-filename --no-line-number "$@" 2>/dev/null
+    else
+        LC_ALL=C grep -h "$@" 2>/dev/null
+    fi
+    return 0
 }
 
 # mcp__plugin_honcho_honcho__get_config -> honcho:get_config
@@ -1804,7 +1826,7 @@ main() {
     local json_cost json_duration lines_added lines_removed
     local current_input current_cache_creation current_cache_read
     local mcp_servers_count tools_count cache_creation_tokens cache_read_tokens
-    local json_tool_calls json_files_edited json_bash_commands transcript_path
+    local json_tool_calls json_files_edited json_bash_commands transcript_path effort_level
     {
         IFS= read -r current_dir; IFS= read -r model_raw; IFS= read -r model_id
         IFS= read -r total_input; IFS= read -r total_output; IFS= read -r context_size
@@ -1815,7 +1837,7 @@ main() {
         IFS= read -r mcp_servers_count; IFS= read -r tools_count
         IFS= read -r cache_creation_tokens; IFS= read -r cache_read_tokens
         IFS= read -r json_tool_calls; IFS= read -r json_files_edited; IFS= read -r json_bash_commands
-        IFS= read -r transcript_path
+        IFS= read -r transcript_path; IFS= read -r effort_level
     } < <(printf '%s' "$input" | jq -Rrs '
         (fromjson? // {}) as $in | $in |
         def v(p; d): ((p // d) | tostring);
@@ -1830,7 +1852,7 @@ main() {
         (.mcp_servers // [] | length), (.tools // [] | length),
         v(.context_window.cache_creation_input_tokens; "0"), v(.context_window.cache_read_input_tokens; "0"),
         v(.stats.tool_calls; ""), v(.stats.files_edited; ""), v(.stats.bash_commands; ""),
-        v(.transcript_path; "")
+        v(.transcript_path; ""), v(.effort.level; "")
     ' 2>/dev/null)
     model=$(format_model_name "$model_raw")
     : "${mcp_servers_count:=0}" "${tools_count:=0}"
@@ -2020,7 +2042,17 @@ main() {
     local SEP=" ${C_GRAY}┊${C_RESET} "
 
     # --- Line 1: Model · Provider · Cost · Duration · Msg  ┊  Tokens · Ctx ---
-    local l1="${C_PURPLE}${model}${C_RESET} · ${provider_section}"
+    local l1="${C_PURPLE}${model}${C_RESET}"
+    if [ -n "$effort_level" ]; then
+        local effort_color="${C_CYAN}"
+        case "$effort_level" in
+            low)        effort_color="${C_GRAY}" ;;
+            high)       effort_color="${C_YELLOW}" ;;
+            xhigh|max)  effort_color="${C_RED}" ;;
+        esac
+        l1+=" ${effort_color}◆ ${effort_level}${C_RESET}"
+    fi
+    l1+=" · ${provider_section}"
     l1+=" · ${final_cost_color}${final_cost_display}${C_RESET}"
     l1+=" · ${C_GRAY}${duration}${C_RESET}"
     l1+=" · ${C_CYAN}${message_count} msg${C_RESET}"
