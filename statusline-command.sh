@@ -1781,6 +1781,22 @@ format_rate_limits() {
     printf '%s %s' "${C_GRAY}◴${C_RESET}" "$out"
 }
 
+# Claude plan from the OAuth account in ~/.claude.json, e.g. "Team 5x", "Max 20x", "Pro".
+# Cached in /tmp and refreshed only when ~/.claude.json changes.
+get_plan_label() {
+    local account_file="${HOME}/.claude.json" cache_file="/tmp/claude-statusline-plan"
+    [ -f "$account_file" ] || return
+    if [ ! -f "$cache_file" ] || [ "$account_file" -nt "$cache_file" ]; then
+        jq -r '
+            .oauthAccount // {} |
+            ({claude_max: "Max", claude_pro: "Pro", claude_team: "Team", claude_enterprise: "Enterprise"}[.organizationType // ""] // "") as $plan |
+            ((.userRateLimitTier // "") | capture("max_(?<x>[0-9]+x)")?.x // "") as $mult |
+            [$plan, $mult] | map(select(. != "")) | join(" ")
+        ' "$account_file" > "$cache_file" 2>/dev/null
+    fi
+    cat "$cache_file" 2>/dev/null
+}
+
 # Prompt cache: hit ratio plus time until the cache goes cold (an idle-cost warning)
 format_prompt_cache() {
     local hit_pct="$1" expires_at="$2" warm="$3" now="$4"
@@ -2015,10 +2031,13 @@ main() {
     # Subscription info
     local subscription_info provider_section
     subscription_info=$(get_subscription_info "$provider_name")
+    local provider_label="$provider_name" plan_label=""
+    [ "$provider_name" = "Claude" ] && plan_label=$(get_plan_label)
+    [ -n "$plan_label" ] && provider_label+=" ${plan_label}"
     if [ -n "$subscription_info" ]; then
-        provider_section=$(printf "${C_CYAN}%s${C_RESET} %s" "$provider_name" "$subscription_info")
+        provider_section=$(printf "${C_CYAN}%s${C_RESET} %s" "$provider_label" "$subscription_info")
     else
-        provider_section=$(printf "${C_CYAN}%s${C_RESET}" "$provider_name")
+        provider_section=$(printf "${C_CYAN}%s${C_RESET}" "$provider_label")
     fi
 
     # Determine cost display (integer cents avoids bc for the thresholds)
