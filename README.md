@@ -667,6 +667,16 @@ claude
 }
 ```
 
+## Honcho Patch
+
+If you use the [Honcho](https://github.com/plastic-labs/claude-honcho) memory plugin, `patch-honcho.py` hides its per-turn notices (`[honcho] … captured / saved / injected`) and makes its hooks write the `~/.honcho/status-<session_id>.json` file behind the `🧠` segment. Plugin updates overwrite the patch, so re-run it after each Honcho update:
+
+```bash
+python3 ~/Scripts/claude-statusline/patch-honcho.py
+```
+
+It finds the newest installed Honcho version, skips patches that are already applied, keeps a `.orig` backup of each file, and restores a file if `node --check` fails. A `!` line means the plugin's code changed and that patch needs updating.
+
 ## Contributing
 
 Found a bug or want to add a feature? Contributions are welcome!
