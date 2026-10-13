@@ -1,9 +1,5 @@
 {
   "version": "1.0.0",
-  "performance": {
-    "cache_ttl": 5,
-    "enable_caching": true
-  },
   "segments": {
     "ai": {
       "enabled": true,

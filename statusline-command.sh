@@ -14,7 +14,6 @@
 # CONSTANTS
 # ============================================================================
 
-readonly DEFAULT_CACHE_TTL=5
 readonly CONFIG_FILE="${HOME}/.claude/statusline-config.json"
 readonly STATUSLINE_CONFIG_FILE="${HOME}/Scripts/claude-statusline/statusline-config.json"
 
@@ -34,23 +33,6 @@ readonly C_RESET="\033[0m"
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
-
-# Print colored text
-# Usage: color_print "green" "text"
-color_print() {
-    local color="$1"
-    local text="$2"
-    case "$color" in
-        cyan)   printf "${C_CYAN}%s${C_RESET}" "$text" ;;
-        blue)   printf "${C_BLUE}%s${C_RESET}" "$text" ;;
-        purple) printf "${C_PURPLE}%s${C_RESET}" "$text" ;;
-        green)  printf "${C_GREEN}%s${C_RESET}" "$text" ;;
-        yellow) printf "${C_YELLOW}%s${C_RESET}" "$text" ;;
-        red)    printf "${C_RED}%s${C_RESET}" "$text" ;;
-        gray)   printf "${C_GRAY}%s${C_RESET}" "$text" ;;
-        *)      printf "%s" "$text" ;;
-    esac
-}
 
 # Get JSON value from file with default fallback
 json_file_get() {
@@ -98,30 +80,11 @@ str_to_bool() {
     [[ "$1" == "true" ]] && echo 1 || echo 0
 }
 
-# ============================================================================
-# CACHING FUNCTIONS
-# ============================================================================
-
-get_cache_file() {
-    local key="$1"
-    local session_id="$2"
-    echo "/tmp/claude-cache-${session_id}-${key}"
-}
-
 # --- Cross-platform date/stat helpers (BSD/macOS vs GNU/Linux) ---
 case "$(uname -s)" in
     Darwin) _OS_FLAVOR="bsd" ;;
     *)      _OS_FLAVOR="gnu" ;;
 esac
-
-# File modification time as epoch seconds
-_stat_mtime() {
-    if [ "$_OS_FLAVOR" = "bsd" ]; then
-        stat -f %m "$1" 2>/dev/null || echo 0
-    else
-        stat -c %Y "$1" 2>/dev/null || echo 0
-    fi
-}
 
 # Parse a date/datetime string to epoch seconds
 # usage: _date_to_epoch "<bsd_input_format>" "<value>"
@@ -143,25 +106,6 @@ _epoch_to_fmt() {
     fi
 }
 
-is_cache_valid() {
-    local cache_file="$1"
-    local ttl="$2"
-
-    [[ "$ENABLE_CACHING" != "true" ]] && return 1
-    [ ! -f "$cache_file" ] && return 1
-
-    local cache_age=$(($(date +%s) - $(_stat_mtime "$cache_file")))
-    [ "$cache_age" -lt "$ttl" ]
-}
-
-read_cache() {
-    cat "$1" 2>/dev/null || echo ""
-}
-
-write_cache() {
-    echo "$2" > "$1" 2>/dev/null
-}
-
 # ============================================================================
 # CONFIGURATION LOADING
 # ============================================================================
@@ -169,9 +113,8 @@ write_cache() {
 load_config() {
     local config_values
     # One jq call for all settings; order must match the read list below
-    if [ -f "$CONFIG_FILE" ] && config_values=$(jq -r --arg ttl "$DEFAULT_CACHE_TTL" '
+    if [ -f "$CONFIG_FILE" ] && config_values=$(jq -r '
         def v(p; d): (p | if . == null then d else tostring end);
-        v(.performance.cache_ttl; $ttl), v(.performance.enable_caching; "true"),
         v(.segments.ai.show_provider; "true"), v(.segments.ai.show_model; "true"),
         v(.segments.ai.show_cost; "true"), v(.segments.ai.show_cache_efficiency; "true"),
         v(.segments.ai.show_rate_limit; "true"), v(.segments.ai.show_message_count; "true"),
@@ -186,7 +129,6 @@ load_config() {
         v(.segments.agents.enabled; "true"), v(.segments.todos.enabled; "true")
     ' "$CONFIG_FILE" 2>/dev/null); then
         {
-            read -r CACHE_TTL; read -r ENABLE_CACHING
             read -r SHOW_PROVIDER; read -r SHOW_MODEL
             read -r SHOW_COST; read -r SHOW_CACHE_EFFICIENCY
             read -r SHOW_RATE_LIMIT; read -r SHOW_MESSAGE_COUNT
@@ -202,8 +144,6 @@ load_config() {
         } <<< "$config_values"
     else
         # Defaults when no config file
-        CACHE_TTL=$DEFAULT_CACHE_TTL
-        ENABLE_CACHING="true"
         SHOW_PROVIDER="true"
         SHOW_MODEL="true"
         SHOW_COST="true"
@@ -256,6 +196,10 @@ format_model_name() {
     fi
     clean_name="${clean_name%:free}"
     clean_name="${clean_name%:exacto}"
+    # "Opus 5.5 (1M context)" -> "Opus 5.5 1M"
+    if [[ "$clean_name" =~ ^(.*)\ \(([0-9]+[KkMm])\ context\)$ ]]; then
+        clean_name="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+    fi
 
     # Handle Kiro AWS proxy models
     if [[ "$clean_name" =~ kiro-claude-(opus|sonnet|haiku)-([0-9])-([0-9])(-agentic)? ]]; then
@@ -1716,7 +1660,9 @@ format_duration() {
     local duration_hours=$((duration_minutes / 60))
     local remaining_minutes=$((duration_minutes % 60))
 
-    if [ "$duration_hours" -gt 0 ]; then
+    if [ "$duration_hours" -ge 24 ]; then
+        echo "$((duration_hours / 24))d $((duration_hours % 24))h"
+    elif [ "$duration_hours" -gt 0 ]; then
         if [ "$remaining_minutes" -gt 0 ]; then
             echo "${duration_hours}h ${remaining_minutes}m"
         else
@@ -2070,7 +2016,10 @@ main() {
             high)       effort_color="${C_YELLOW}" ;;
             xhigh|max)  effort_color="${C_RED}" ;;
         esac
-        l1+=" ${effort_color}◆ ${effort_level}${C_RESET}"
+        # Title Case; bash 3.2 has no ${var^}
+        local effort_label
+        effort_label="$(printf '%s' "${effort_level:0:1}" | tr '[:lower:]' '[:upper:]')${effort_level:1}"
+        l1+=" ${effort_color}◆ ${effort_label}${C_RESET}"
     fi
     [ "$fast_mode" = "true" ] && l1+=" ${C_YELLOW}↯ fast${C_RESET}"
     [ "$thinking_on" = "true" ] && l1+=" ${C_GRAY}✻${C_RESET}"

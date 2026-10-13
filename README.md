@@ -218,7 +218,7 @@ When helping users, check these common issues:
 
 3. **Config file not found**
    - Ensure statusline-config.json exists
-   - Check path matches in statusline-command.sh (line ~437)
+   - Check `STATUSLINE_CONFIG_FILE` near the top of statusline-command.sh
    - Default location: `$HOME/Scripts/claude-statusline/statusline-config.json`
 
 4. **Settings.json syntax error**
@@ -287,6 +287,7 @@ When helping users, check these common issues:
 - **jq** - JSON processor for reading config files
 - **git** - For git status information (optional but recommended)
 - **lsof** or **netstat** - For server detection (usually pre-installed)
+- **ripgrep** (`rg`) - Optional; much faster transcript scanning on long sessions (`brew install ripgrep`)
 
 ### Installing jq
 
@@ -440,29 +441,32 @@ This controls what the statusline displays and how it behaves. See [Customizatio
 ## Features
 
 ### AI Metrics
-- Provider and model name
-- Token usage (input/output/cache)
-- Cost tracking per session
-- Cache efficiency percentage
-- Rate limit information
-- Message count
-- MCP servers count
-- Response time estimates
+- Model name, effort level (`◆ High`), fast mode (`↯ fast`) and thinking (`✻`) indicators
+- Claude plan from your account (`Claude Team 5x`, `Claude Max 20x`, `Claude Pro`)
+- Session cost (reported by Claude Code, estimated from pricing tables otherwise)
+- Context usage as a colored bar (`▰▰▱▱▱▱▱▱▱▱ 18%`)
+- Prompt cache hit ratio and time until the cache goes cold
+- 5-hour and 7-day usage limits with reset countdowns
+- Message count, MCP servers count
+
+### Live Activity
+- Running tool with target and elapsed time
+- Running subagents (including background agents) with type, model and description
+- Completed tools (top 3, MCP names shortened like `honcho:get_config`)
+- Current todo and progress
 
 ### Git Information
-- Current branch
-- File changes (added/modified/deleted)
-- Sync status
-- Last commit info
-- Commits today count
+- Current branch, dirty marker, sync status (`=`, `↑2`, `↓1`)
+- Added/removed files, last commit age, commits today
 
 ### Development Environment
-- Session start time
-- Current time
-- Detected language/framework
-- Package manager
+- Session name
+- Detected language/framework and package manager
 - Running servers on configured ports
 - Subscription renewal tracking
+
+### Performance
+Renders in ~0.4s, even on long sessions: input and config are each read with a single `jq` call, git info uses one `git status --porcelain=v2` call, and the transcript scan only JSON-parses tool calls. Install [ripgrep](https://github.com/BurntSushi/ripgrep) for the fastest transcript scanning on very large sessions.
 
 ## Customization
 
@@ -600,37 +604,20 @@ claude
 ### Example Output
 
 ```
-🤖 Antigravity gemini-2.5-pro-exp | 45.2k/200k (23%) | $0.15 | ⚡95% | ≈45% (5d) | 🔧 8 | 📊 12
-📁 ~/project main ✓ | +2 ~3 | ↑1 | 🕒 2h ago | 📅 3
-⏰ 14:32 | 🚀 2h 15m | ⚛️ React | 📦 npm | 🌐 vite:5173, api:8000
+╭ Opus 5.5 1M ◆ High ✻ · Claude Team 5x · $2.84 · 45m · 37 msg ┊ ▰▰▱▱▱▱▱▱▱▱ 18% (182.2k/1M) ┊ cache 96% (42m) ┊ ◴ 5h 41% (2h 19m) · 7d 23% (3d 22h)
+│ ◇ Refactor auth flow ┊ claude-statusline ⎇  main * = · 9m ago · ✓ 4 today · +212/-87 ┊ 🔌 5
+│ ✓ Bash ×12 ✓ Read ×8 ✓ Edit ×5 +1
+│ ◓ Explore [haiku]: Find token refresh callers (2m 18s)
+╰ ▸ Wiring up session refresh (2/4)
 ```
 
 **Reading the output:**
 
-**Line 1 (AI Metrics):**
-- Provider: Antigravity
-- Model: gemini-2.5-pro-exp
-- Tokens: 45.2k used / 200k context (23%)
-- Cost: $0.15 this session
-- Cache: 95% efficiency
-- Rate limit: 45% used (resets in 5 days)
-- MCP servers: 8 active
-- Messages: 12 in conversation
+**Line 1 (AI):** model and context size, effort level, thinking on, plan, session cost, duration, message count, context bar, prompt cache hit ratio (and minutes until it goes cold), 5h/7d usage with reset countdowns.
 
-**Line 2 (Git Info):**
-- Directory: ~/project
-- Branch: main ✓ (clean)
-- Changes: +2 added, ~3 modified
-- Sync: ↑1 commit ahead
-- Last commit: 2 hours ago
-- Commits today: 3
+**Line 2 (Session & Git):** session name, directory, branch, dirty marker, in sync with upstream, last commit 9 minutes ago, 4 commits today, lines added/removed this session, 5 MCP servers.
 
-**Line 3 (Dev Environment):**
-- Current time: 14:32
-- Session duration: 2h 15m
-- Language: React detected
-- Package manager: npm
-- Running servers: vite on port 5173, api on port 8000
+**Activity lines (only when active):** completed tools, a running subagent, the current todo with progress.
 
 ### Minimal Configuration Example
 
@@ -650,10 +637,6 @@ claude
 ```json
 {
   "version": "1.0.0",
-  "performance": {
-    "cache_ttl": 5,
-    "enable_caching": true
-  },
   "segments": {
     "ai": {
       "enabled": true,
