@@ -2019,6 +2019,7 @@ main() {
         # Title Case; bash 3.2 has no ${var^}
         local effort_label
         effort_label="$(printf '%s' "${effort_level:0:1}" | tr '[:lower:]' '[:upper:]')${effort_level:1}"
+        [ "$effort_level" = "xhigh" ] && effort_label="Extra"
         l1+=" ${effort_color}◆ ${effort_label}${C_RESET}"
     fi
     [ "$fast_mode" = "true" ] && l1+=" ${C_YELLOW}↯ fast${C_RESET}"
