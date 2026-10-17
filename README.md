@@ -443,10 +443,24 @@ This controls what the statusline displays and how it behaves. See [Customizatio
 ### AI Metrics
 - Model name, effort level (`◆ High`), fast mode (`↯ fast`) and thinking (`✻`) indicators
 - Claude plan from your account (`Claude Team 5x`, `Claude Max 20x`, `Claude Pro`)
-- Session cost (reported by Claude Code, estimated from pricing tables otherwise)
-- Context usage as a colored bar (`▰▰▱▱▱▱▱▱▱▱ 18%`)
+- Session cost (reported by Claude Code, estimated from pricing tables otherwise), a sparkline of cost per message (`▃▃▇▃▆▅`) and burn rate per hour of active API time (`$8.11/h`)
+- Spend across all sessions: `today $15.46 wk $56.66` (rolling 7 days), from a per-day ledger in `~/.cache/claude-statusline/`. Sessions spanning midnight split their cost between days. Only sessions rendered since the ledger existed are counted
+- Context trend sparkline (`▁▂▃▄▅`, drops show compactions)
+- Context usage as a smooth gradient bar (`█▋········ 18%`, 1/8-cell precision, green → yellow → red) and, from 50% on, an estimate of messages left (`~14 msg left`) from a moving average of per-message context growth
 - Prompt cache hit ratio and time until the cache goes cold
-- 5-hour and 7-day usage limits with reset countdowns
+- 5-hour and 7-day usage limits with mini bars, reset countdowns and a run-out projection (`→ full ~16:40`) when the current burn rate would hit the limit before the reset
+
+### Alerts
+Context ≥85%, cache expiring within 5 minutes, a usage limit ≥90% or projected to run out are shown bold with `⚠`, and the gutter turns red.
+
+### Adaptive Layout
+Lines are fitted to the terminal width (`$COLUMNS`, passed by Claude Code). On narrow terminals the least important segments drop first (duration, provider, token counts…); alerts drop last, model and directory never.
+
+### Truecolor
+Gradients use 24-bit color when `COLORTERM` is `truecolor`/`24bit`, otherwise the 16-color palette. Force 16 colors with `STATUSLINE_TRUECOLOR=0`.
+
+### Themes
+Set `display.theme` in `~/.claude/statusline-config.json` to `catppuccin`, `tokyonight`, `dracula`, `nord` or `rosepine` (truecolor only; gradients follow the theme). `default` keeps your terminal's palette.
 - Message count, MCP servers count
 - Honcho memory activity (`🧠 ←5 ↑24 ✓12`: conclusions recalled for the last prompt, tool events captured, messages saved), read from `~/.honcho/status-<session_id>.json`. Upstream Honcho doesn't write this file; it needs a local patch to its hooks
 
@@ -459,6 +473,8 @@ This controls what the statusline displays and how it behaves. See [Customizatio
 ### Git Information
 - Current branch, dirty marker, sync status (`=`, `↑2`, `↓1`)
 - Added/removed files, last commit age, commits today
+- Open PR for the branch with CI checks and review state (`PR #18 ✓ approved`), via `gh`, refreshed in the background at most once a minute
+- Clickable links (OSC 8, in terminals that support them): folder → Finder, branch → repo tree, PR → pull request
 
 ### Development Environment
 - Session name

@@ -21,14 +21,37 @@ readonly STATUSLINE_CONFIG_FILE="${HOME}/Scripts/claude-statusline/statusline-co
 # COLOR DEFINITIONS
 # ============================================================================
 
-readonly C_CYAN="\033[36m"
-readonly C_BLUE="\033[34m"
-readonly C_PURPLE="\033[35m"
-readonly C_GREEN="\033[32m"
-readonly C_YELLOW="\033[33m"
-readonly C_RED="\033[31m"
-readonly C_GRAY="\033[90m"
+# 24-bit gradients when the terminal advertises them; STATUSLINE_TRUECOLOR=0 forces 16 colors
+TRUECOLOR=0
+[[ "$COLORTERM" =~ ^(truecolor|24bit)$ ]] && [ "${STATUSLINE_TRUECOLOR:-1}" != 0 ] && TRUECOLOR=1
+
+# Theme palettes (truecolor only), R;G;B in order: cyan blue purple green yellow red gray.
+# "default" keeps the terminal's own 16-color palette.
+THEME_PALETTE=""
+if [ "$TRUECOLOR" = 1 ]; then
+    case "$(jq -r '.display.theme // "default"' "$CONFIG_FILE" 2>/dev/null)" in
+        catppuccin) THEME_PALETTE="137;220;235 137;180;250 203;166;247 166;227;161 249;226;175 243;139;168 127;132;156" ;;
+        tokyonight) THEME_PALETTE="125;207;255 122;162;247 187;154;247 158;206;106 224;175;104 247;118;142 86;95;137" ;;
+        dracula)    THEME_PALETTE="139;233;253 130;170;255 189;147;249 80;250;123 241;250;140 255;85;85 98;114;164" ;;
+        nord)       THEME_PALETTE="136;192;208 129;161;193 180;142;173 163;190;140 235;203;139 191;97;106 110;120;140" ;;
+        rosepine)   THEME_PALETTE="156;207;216 49;116;143 196;167;231 156;207;216 246;193;119 235;111;146 110;106;134" ;;
+    esac
+fi
+if [ -n "$THEME_PALETTE" ]; then
+    read -r _cy _bl _pu _gr _ye _re _gy <<< "$THEME_PALETTE"
+    readonly C_CYAN="\033[38;2;${_cy}m" C_BLUE="\033[38;2;${_bl}m" C_PURPLE="\033[38;2;${_pu}m"
+    readonly C_GREEN="\033[38;2;${_gr}m" C_YELLOW="\033[38;2;${_ye}m" C_RED="\033[38;2;${_re}m"
+    readonly C_GRAY="\033[38;2;${_gy}m"
+    # Gradient stops follow the theme's green/yellow/red
+    GRAD_LO=${_gr//;/ } GRAD_MID=${_ye//;/ } GRAD_HI=${_re//;/ }
+else
+    readonly C_CYAN="\033[36m" C_BLUE="\033[34m" C_PURPLE="\033[35m"
+    readonly C_GREEN="\033[32m" C_YELLOW="\033[33m" C_RED="\033[31m" C_GRAY="\033[90m"
+    GRAD_LO="80 200 120" GRAD_MID="235 195 70" GRAD_HI="240 80 80"
+fi
 readonly C_RESET="\033[0m"
+readonly C_ALERT="\033[1m${C_RED}"
+readonly C_WARN="\033[1m${C_YELLOW}"
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -1463,15 +1486,151 @@ short_tool_name() {
     printf '%s:%s' "$server" "$tool"
 }
 
-# 10-cell bar for a 0-100 percentage
+# Green → yellow (70) → red (100) color for a 0-100 value; 16-color thresholds without truecolor
+grad_color() {
+    local p=$1 r1 g1 b1 r2 g2 b2 t span
+    [ "$p" -gt 100 ] && p=100
+    [ "$p" -lt 0 ] && p=0
+    if [ "$TRUECOLOR" = 0 ]; then
+        if [ "$p" -ge 90 ]; then printf '%s' "$C_RED"
+        elif [ "$p" -ge 70 ]; then printf '%s' "$C_YELLOW"
+        else printf '%s' "$C_GREEN"; fi
+        return
+    fi
+    if [ "$p" -le 70 ]; then
+        read -r r1 g1 b1 <<< "$GRAD_LO"; read -r r2 g2 b2 <<< "$GRAD_MID"; t=$p; span=70
+    else
+        read -r r1 g1 b1 <<< "$GRAD_MID"; read -r r2 g2 b2 <<< "$GRAD_HI"; t=$((p - 70)); span=30
+    fi
+    printf '\\033[38;2;%d;%d;%dm' $((r1 + (r2 - r1) * t / span)) $((g1 + (g2 - g1) * t / span)) $((b1 + (b2 - b1) * t / span))
+}
+
+# Smooth bar with 1/8-cell precision; each cell is colored by its own position (gradient track)
 make_bar() {
-    local pct=$1 filled i bar=""
+    local pct=$1 width=${2:-10} i cell eighths bar=""
+    local -a parts=("" "▏" "▎" "▍" "▌" "▋" "▊" "▉")
     [ "$pct" -gt 100 ] && pct=100
-    filled=$(( (pct + 5) / 10 ))
-    for ((i = 0; i < 10; i++)); do
-        if [ "$i" -lt "$filled" ]; then bar+="▰"; else bar+="▱"; fi
+    eighths=$((pct * width * 8 / 100))
+    for ((i = 0; i < width; i++)); do
+        cell=$((eighths - i * 8))
+        if [ "$cell" -le 0 ]; then bar+="${C_GRAY}·"; continue; fi
+        if [ "$TRUECOLOR" = 1 ]; then bar+=$(grad_color $(( (i * 100 + 50) / width )))
+        else bar+=$(grad_color "$pct"); fi
+        if [ "$cell" -ge 8 ]; then bar+="█"; else bar+="${parts[$cell]}"; fi
     done
-    printf '%s' "$bar"
+    printf '%s' "${bar}${C_RESET}"
+}
+
+# Visible width of a string with literal \033[..m color codes and \033]8 links
+vis_len() {
+    local s
+    s=$(printf '%s' "$1" | sed -e 's/\\033\[[0-9;]*m//g' -e 's/\\033]8;;[^\\]*\\a//g' -e $'s/\033\\[[0-9;]*m//g')
+    printf '%s' "${#s}"
+}
+
+# Join "prio<TAB>sep<TAB>text" segments in display order, dropping the highest prio first
+# until the line fits $1 columns. Prio 0 is never dropped; ⚠ alert segments go last (prio 1).
+fit_line() {
+    local width=$1; shift
+    local -a segs=("$@")
+    local line i p max drop rest
+    while :; do
+        line=""; max=0; drop=-1
+        for i in "${!segs[@]}"; do
+            [ -z "${segs[$i]}" ] && continue
+            p=${segs[$i]%%$'\t'*}; rest=${segs[$i]#*$'\t'}
+            [ -n "$line" ] && line+="${rest%%$'\t'*}"
+            line+="${rest#*$'\t'}"
+            [[ "$rest" == *⚠* ]] && [ "$p" -gt 1 ] && p=1
+            # -ge: on ties drop the rightmost segment
+            if [ "$p" -gt 0 ] && [ "$p" -ge "$max" ]; then max=$p; drop=$i; fi
+        done
+        { [ "$drop" -lt 0 ] || [ "$(vis_len "$line")" -le "$width" ]; } && break
+        segs[$drop]=""
+    done
+    printf '%s' "$line"
+}
+
+# ▁▂▃▄▅▆▇█ for space-separated integers, scaled to $2 (or to their max when omitted)
+sparkline() {
+    local max=${2:-0} v out=""
+    local -a vals=($1) ch=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    if [ "$max" -eq 0 ]; then
+        for v in "${vals[@]}"; do [ "$v" -gt "$max" ] && max=$v; done
+    fi
+    [ "$max" -le 0 ] && return
+    for v in "${vals[@]}"; do
+        [ "$v" -gt "$max" ] && v=$max
+        [ "$v" -lt 0 ] && v=0
+        out+=${ch[$((v * 7 / max))]}
+    done
+    printf '%s' "$out"
+}
+
+fmt_cents() {
+    printf '$%d.%02d' $(($1 / 100)) $(($1 % 100))
+}
+
+# OSC 8 hyperlink (BEL-terminated); terminals without support just show the text
+osc_link() {
+    printf '\\033]8;;%s\\a%s\\033]8;;\\a' "$1" "$2"
+}
+
+# Spend across all sessions: prints "<today cents> <last 7 days cents>".
+# Per-day ledger rows: session_id, baseline (cost when first seen that day), latest cost.
+# A session spanning midnight thus splits its cost between days; a cost reset (resume)
+# carries the earlier spend forward by lowering the baseline.
+# shortcut: only counts sessions this statusline has rendered since the ledger existed
+cost_ledger() {
+    local sid=$1 cents=$2 dir="${HOME}/.cache/claude-statusline" now today cutoff file
+    [ -n "$sid" ] && mkdir -p "$dir" 2>/dev/null || return
+    now=$(date +%s); today=$(_epoch_to_fmt "$now" +%F)
+    cutoff=$(_epoch_to_fmt $((now - 6 * 86400)) +%F)
+    file="$dir/cost-${today}.tsv"
+    touch "$file"
+    awk -F'\t' -v OFS='\t' -v s="$sid" -v c="$cents" '
+        $1 == s { if (c < $3) $2 -= $3; $3 = c; f = 1 }
+        { print }
+        END { if (!f) print s, c, c }' "$file" > "$file.$$" && mv "$file.$$" "$file"
+    awk -F'\t' -v today="cost-${today}.tsv" -v cutoff="cost-${cutoff}.tsv" '
+        { n = FILENAME; sub(/.*\//, "", n); if (n < cutoff) next
+          d = $3 - $2; if (d < 0) d = 0; w += d; if (n == today) t += d }
+        END { printf "%d %d", t, w }' "$dir"/cost-*.tsv
+}
+
+# Open PR (not merged/closed) for the current branch via gh: "number<TAB>checks<TAB>review<TAB>url".
+# Refreshed in the background at most once a minute so the render never waits on the network.
+get_pr_status() {
+    local dir=$1 branch=$2 cache key
+    command -v gh >/dev/null 2>&1 && [ -n "$branch" ] && [ "$branch" != "detached" ] || return
+    key=$(printf '%s' "${dir}|${branch}" | cksum | cut -d' ' -f1)
+    cache="/tmp/claude-statusline-pr-${key}"
+    if [ ! -f "$cache" ] || [ -n "$(find "$cache" -mmin +1 2>/dev/null)" ]; then
+        touch "$cache"
+        (cd "$dir" && gh pr view "$branch" --json state,number,url,reviewDecision,statusCheckRollup --jq 'select(.state == "OPEN") |
+            ([.statusCheckRollup[]? | (.conclusion // .state // "")] ) as $c |
+            (if ($c | length) == 0 then ""
+             elif any($c[]; test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED")) then "fail"
+             elif any($c[]; . == "" or test("PENDING|QUEUED|IN_PROGRESS|EXPECTED")) then "pending"
+             else "pass" end) as $checks |
+            [.number, $checks, (.reviewDecision // ""), .url] | @tsv
+        ' > "$cache.$$" 2>/dev/null; mv "$cache.$$" "$cache") </dev/null >/dev/null 2>&1 &
+    fi
+    cat "$cache" 2>/dev/null
+}
+
+# https URL of the origin remote (GitHub/GitLab style), empty when unknown
+get_repo_url() {
+    local url rest
+    url=$(git -C "$1" remote get-url origin 2>/dev/null) || return
+    url=${url%.git}
+    case "$url" in
+        git@*:*) rest=${url#git@}; url="https://${rest%%:*}/${rest#*:}" ;;
+        ssh://git@*) url="https://${url#ssh://git@}" ;;
+        https://*) url=${url/\/\/*@/\/\/} ;;
+        *) return ;;
+    esac
+    printf '%s' "$url"
 }
 
 format_tool_target() {
@@ -1681,50 +1840,37 @@ format_duration() {
 
 # Format a single rate-limit window (5h or 7d) into a colored segment.
 # Echoes nothing when the window is absent (non-subscribers / pre-first-response).
+# Projects the run-out time from the burn rate since the window started; ⚠ when it beats the reset.
 format_rate_window() {
-    local label="$1" path="$2" input="$3" now="$4"
+    local label="$1" path="$2" input="$3" now="$4" window_secs="$5" eta_fmt="$6"
 
-    local pct
-    pct=$(echo "$input" | jq -r "${path}.used_percentage // empty" 2>/dev/null)
-    [ -z "$pct" ] && return
-    pct=${pct%.*}
+    local pct resets
+    { IFS= read -r pct; IFS= read -r resets; } < <(
+        jq -r "${path} // {} | (.used_percentage // \"\" | tostring), (.resets_at // \"\" | tostring)" <<< "$input" 2>/dev/null)
+    pct=${pct%.*}; resets=${resets%.*}
     [[ ! "$pct" =~ ^[0-9]+$ ]] && return
 
-    local color="${C_GREEN}"
-    if [ "$pct" -ge 90 ]; then
-        color="${C_RED}"
-    elif [ "$pct" -ge 70 ]; then
-        color="${C_YELLOW}"
-    fi
-
-    local seg="${label} ${color}${pct}%${C_RESET}"
-
-    local resets
-    resets=$(echo "$input" | jq -r "${path}.resets_at // empty" 2>/dev/null)
+    local color seg eta=""
+    color=$(grad_color "$pct")
     if [[ "$resets" =~ ^[0-9]+$ ]] && [ "$resets" -gt "$now" ]; then
-        seg+=" ${C_GRAY}($(format_duration "$now" "$resets"))${C_RESET}"
+        # Skip the first 1/30 of a window (10m of 5h): too little data for a stable rate
+        local elapsed=$((now - (resets - window_secs)))
+        if [ "$pct" -ge 5 ] && [ "$pct" -lt 100 ] && [ "$elapsed" -ge $((window_secs / 30)) ]; then
+            local runout=$((now + (100 - pct) * elapsed / pct))
+            [ "$runout" -lt "$resets" ] && eta=$(_epoch_to_fmt "$runout" "$eta_fmt")
+        fi
     fi
+
+    if [ "$pct" -ge 90 ] || [ -n "$eta" ]; then
+        seg="${C_ALERT}⚠ ${label}${C_RESET} "
+    else
+        seg="${label} "
+    fi
+    seg+="$(make_bar "$pct" 5) ${color}${pct}%${C_RESET}"
+    [[ "$resets" =~ ^[0-9]+$ ]] && [ "$resets" -gt "$now" ] && seg+=" ${C_GRAY}($(format_duration "$now" "$resets"))${C_RESET}"
+    [ -n "$eta" ] && seg+=" ${C_ALERT}→ full ~${eta}${C_RESET}"
 
     printf '%s' "$seg"
-}
-
-# Build the Claude usage segment from .rate_limits. Echoes nothing when no
-# window data is present, so the caller can append it unconditionally.
-format_rate_limits() {
-    local input="$1" now="$2"
-
-    local five seven out=""
-    five=$(format_rate_window "5h" ".rate_limits.five_hour" "$input" "$now")
-    seven=$(format_rate_window "7d" ".rate_limits.seven_day" "$input" "$now")
-
-    [ -n "$five" ] && out+="$five"
-    if [ -n "$seven" ]; then
-        [ -n "$out" ] && out+=" · "
-        out+="$seven"
-    fi
-
-    [ -z "$out" ] && return
-    printf '%s %s' "${C_GRAY}◴${C_RESET}" "$out"
 }
 
 # Claude plan from the OAuth account in ~/.claude.json, e.g. "Team 5x", "Max 20x", "Pro".
@@ -1768,6 +1914,7 @@ format_prompt_cache() {
     fi
 
     local seg="${C_GRAY}cache${C_RESET}"
+    [[ "$expires_at" =~ ^[0-9]+$ ]] && [ $((expires_at - now)) -le 300 ] && seg="${C_WARN}⚠ cache${C_RESET}"
     if [[ "$hit_pct" =~ ^[0-9]+$ ]]; then
         local color="${C_GREEN}"
         if [ "$hit_pct" -lt 70 ]; then
@@ -1805,7 +1952,7 @@ main() {
     local current_input current_cache_creation current_cache_read
     local mcp_servers_count tools_count cache_creation_tokens cache_read_tokens
     local json_tool_calls json_files_edited json_bash_commands transcript_path effort_level
-    local native_ctx_pct cache_hit_pct cache_expires_at cache_warm fast_mode thinking_on session_name
+    local native_ctx_pct cache_hit_pct cache_expires_at cache_warm fast_mode thinking_on session_name api_duration
     {
         IFS= read -r current_dir; IFS= read -r model_raw; IFS= read -r model_id
         IFS= read -r total_input; IFS= read -r total_output; IFS= read -r context_size
@@ -1819,6 +1966,7 @@ main() {
         IFS= read -r transcript_path; IFS= read -r effort_level
         IFS= read -r native_ctx_pct; IFS= read -r cache_hit_pct; IFS= read -r cache_expires_at
         IFS= read -r cache_warm; IFS= read -r fast_mode; IFS= read -r thinking_on; IFS= read -r session_name
+        IFS= read -r api_duration
     } < <(printf '%s' "$input" | jq -Rrs '
         (fromjson? // {}) as $in | $in |
         def v(p; d): ((p // d) | tostring);
@@ -1837,7 +1985,8 @@ main() {
         v(.context_window.used_percentage | numbers | floor; ""),
         v(.prompt_cache.hit_ratio | numbers | . * 100 | floor; ""), v(.prompt_cache.expires_at | numbers | floor; ""),
         (.prompt_cache.warm | if . == null then "" else tostring end), v(.fast_mode; ""), v(.thinking.enabled; ""),
-        v(.session_name | strings | gsub("[\n\t]"; " "); "")
+        v(.session_name | strings | gsub("[\n\t]"; " "); ""),
+        v(.cost.total_api_duration_ms | numbers | floor; "")
     ' 2>/dev/null)
     model=$(format_model_name "$model_raw")
     : "${mcp_servers_count:=0}" "${tools_count:=0}"
@@ -1865,9 +2014,6 @@ main() {
     current_time=$(date +%s)
     duration=$(format_duration "$session_start" "$current_time")
 
-    # Claude usage (5h / 7d rate limits) — only present for Pro/Max subscribers
-    local rate_limit_section=""
-    [ "$SHOW_RATE_LIMIT" = "true" ] && rate_limit_section=$(format_rate_limits "$input" "$current_time")
 
     # Message count tracking
     local prev_total current_total message_count
@@ -1878,7 +2024,9 @@ main() {
     message_count=$(cat "$message_count_file" 2>/dev/null || echo "0")
 
     # Increment if tokens increased (including first real message after init)
+    local new_message=""
     if [ "$current_total" -gt "$prev_total" ]; then
+        new_message=1
         message_count=$((message_count + 1))
         echo "$message_count" > "$message_count_file"
     fi
@@ -1966,15 +2114,22 @@ main() {
                 context_usage_pct=$((current_total_tokens * 100 / context_size))
             fi
 
-            # Color based on usage
-            if [ "$context_usage_pct" -ge 90 ]; then
-                context_usage_color="${C_RED}"
-            elif [ "$context_usage_pct" -ge 70 ]; then
-                context_usage_color="${C_YELLOW}"
-            else
-                context_usage_color="${C_GREEN}"
-            fi
+            context_usage_color=$(grad_color "$context_usage_pct")
         fi
+    fi
+
+    # Messages left before the window fills, from a moving average of per-message context growth
+    local growth_file="/tmp/claude-ctxgrowth-${session_id}" last_ctx=0 avg_growth=0 msgs_left=""
+    [ -f "$growth_file" ] && read -r last_ctx avg_growth < "$growth_file"
+    [[ "$last_ctx" =~ ^[0-9]+$ ]] || last_ctx=0
+    [[ "$avg_growth" =~ ^[0-9]+$ ]] || avg_growth=0
+    if [ "$current_total_tokens" -gt "$last_ctx" ] && [ "$last_ctx" -gt 0 ]; then
+        local delta=$((current_total_tokens - last_ctx))
+        if [ "$avg_growth" -eq 0 ]; then avg_growth=$delta; else avg_growth=$(( (avg_growth * 3 + delta) / 4 )); fi
+    fi
+    [ "$current_total_tokens" -gt 0 ] && echo "$current_total_tokens $avg_growth" > "$growth_file"
+    if [ "$context_usage_pct" -ge 50 ] && [ "$avg_growth" -gt 0 ] && [ "$context_size" -gt 0 ]; then
+        msgs_left=$(( context_size * (100 - context_usage_pct) / 100 / avg_growth ))
     fi
 
     # Git info
@@ -2013,6 +2168,30 @@ main() {
         final_cost_color="${C_GREEN}"
     fi
 
+    # Burn rate per hour of active API time (idle time would dilute it), after 1m of it
+    local burn_rate=""
+    if [[ "$api_duration" =~ ^[0-9]+$ ]] && [ "$api_duration" -ge 60000 ] && [ "$cost_cents" -gt 0 ]; then
+        local cph=$((cost_cents * 3600000 / api_duration))
+        burn_rate="$(fmt_cents "$cph")/h"
+    fi
+
+    # Per-message history ("ctx% cost_cents") for sparklines: context trend and cost per message
+    local hist_file="/tmp/claude-hist-${session_id}" ctx_spark="" cost_spark=""
+    [ -n "$new_message" ] && [ -n "$session_id" ] && echo "$context_usage_pct $cost_cents" >> "$hist_file"
+    if [ -f "$hist_file" ]; then
+        local ctx_hist cost_hist
+        { IFS= read -r ctx_hist; IFS= read -r cost_hist; } < <(tail -n 13 "$hist_file" | awk '
+            { c[NR] = $1; d[NR] = $2 }
+            END { s = NR > 12 ? 2 : 1
+                  for (i = s; i <= NR; i++) printf "%s ", c[i]; print ""
+                  for (i = (s > 1 ? s : 2); i <= NR; i++) printf "%d ", d[i] - d[i-1]; print "" }')
+        [ "$(wc -w <<< "$ctx_hist")" -ge 3 ] && ctx_spark=$(sparkline "$ctx_hist" 100)
+        [ "$(wc -w <<< "$cost_hist")" -ge 3 ] && cost_spark=$(sparkline "$cost_hist")
+    fi
+
+    local spend_today=0 spend_week=0
+    read -r spend_today spend_week <<< "$(cost_ledger "$session_id" "$cost_cents")"
+
     # ========================================================================
     # OUTPUT GENERATION (Ultra compact 2-line layout with ┊ separators)
     # ========================================================================
@@ -2038,52 +2217,101 @@ main() {
     fi
     [ "$fast_mode" = "true" ] && l1+=" ${C_YELLOW}↯ fast${C_RESET}"
     [ "$thinking_on" = "true" ] && l1+=" ${C_GRAY}✻${C_RESET}"
-    l1+=" · ${provider_section}"
-    l1+=" · ${final_cost_color}${final_cost_display}${C_RESET}"
-    l1+=" · ${C_GRAY}${duration}${C_RESET}"
-    l1+=" · ${C_CYAN}${message_count} msg${C_RESET}"
 
-    local tok_sec=""
+    # Segments: "prio<TAB>separator<TAB>text"; fit_line drops high prio first on narrow terminals
+    local T=$'\t' D=" · "
+    local -a s1=("0${T}${T}${l1}" "8${T}${D}${T}${provider_section}"
+        "2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
+    [ -n "$cost_spark" ] && s1+=("7${T} ${T}${final_cost_color}${cost_spark}${C_RESET}")
+    [ -n "$burn_rate" ] && s1+=("6${T} ${T}${C_GRAY}${burn_rate}${C_RESET}")
+    [[ "$spend_today" =~ ^[0-9]+$ ]] && [ "$spend_today" -gt "$cost_cents" ] &&
+        s1+=("5${T}${D}${T}${C_GRAY}today${C_RESET} ${C_YELLOW}$(fmt_cents "$spend_today")${C_RESET}")
+    [[ "$spend_week" =~ ^[0-9]+$ ]] && [ "$spend_week" -gt "$spend_today" ] &&
+        s1+=("8${T} ${T}${C_GRAY}wk $(fmt_cents "$spend_week")${C_RESET}")
+    s1+=("9${T}${D}${T}${C_GRAY}${duration}${C_RESET}" "7${T}${D}${T}${C_CYAN}${message_count} msg${C_RESET}")
+
     if [ "$context_usage_pct" -gt 0 ]; then
-        tok_sec+="${context_usage_color}$(make_bar "$context_usage_pct") ${context_usage_pct}%${C_RESET}"
-        tok_sec+=" ${C_GRAY}($(format_k "$current_total_tokens")/$(format_k "$context_size"))${C_RESET}"
+        local ctx_label=""
+        [ "$context_usage_pct" -ge 85 ] && ctx_label="${C_ALERT}⚠ ctx${C_RESET} "
+        s1+=("1${T}${SEP}${T}${ctx_label}$(make_bar "$context_usage_pct") ${context_usage_color}${context_usage_pct}%${C_RESET}")
+        s1+=("5${T} ${T}${C_GRAY}($(format_k "$current_total_tokens")/$(format_k "$context_size"))${C_RESET}")
+        [ -n "$ctx_spark" ] && s1+=("6${T} ${T}${C_GRAY}${ctx_spark}${C_RESET}")
+        if [ -n "$msgs_left" ]; then
+            local left_color="${C_GRAY}"
+            [ "$msgs_left" -le 10 ] && left_color="${C_ALERT}"
+            s1+=("3${T} ${T}${left_color}~${msgs_left} msg left${C_RESET}")
+        fi
     fi
-    [ -n "$tok_sec" ] && l1+="${SEP}${tok_sec}"
 
     local cache_section
     cache_section=$(format_prompt_cache "$cache_hit_pct" "$cache_expires_at" "$cache_warm" "$current_time")
-    [ -n "$cache_section" ] && l1+="${SEP}${cache_section}"
+    [ -n "$cache_section" ] && s1+=("4${T}${SEP}${T}${cache_section}")
+    if [ "$SHOW_RATE_LIMIT" = "true" ]; then
+        local five seven
+        five=$(format_rate_window "5h" ".rate_limits.five_hour" "$input" "$current_time" 18000 "+%H:%M")
+        seven=$(format_rate_window "7d" ".rate_limits.seven_day" "$input" "$current_time" 604800 "+%a %H:%M")
+        [ -n "$five" ] && s1+=("2${T}${SEP}${T}${C_GRAY}◴${C_RESET} ${five}")
+        if [ -n "$seven" ]; then
+            if [ -n "$five" ]; then s1+=("3${T}${D}${T}${seven}")
+            else s1+=("3${T}${SEP}${T}${C_GRAY}◴${C_RESET} ${seven}"); fi
+        fi
+    fi
 
-    [ -n "$rate_limit_section" ] && l1+="${SEP}${rate_limit_section}"
-
+    # Gutter (4 cols) + margin; Claude Code passes the terminal width in COLUMNS
+    local line_width=999
+    [[ "$COLUMNS" =~ ^[0-9]+$ ]] && line_width=$((COLUMNS - 6))
+    l1=$(fit_line "$line_width" "${s1[@]}")
     out_lines+=("$l1"); out_types+=("n")
 
     # --- Line 2: Git/folder + changes  ┊  Stats  ┊  Dev + Config ---
-    local l2=""
+    local -a s2=()
     if [ -n "$session_name" ]; then
         local short_name="$session_name"
         [ ${#short_name} -gt 32 ] && short_name="${short_name:0:31}…"
-        l2+="${C_PURPLE}◇ ${short_name}${C_RESET}${SEP}"
+        s2+=("5${T}${T}${C_PURPLE}◇ ${short_name}${C_RESET}")
     fi
 
     # Section 1: Git or folder + lines changed
+    local dir_link
+    dir_link=$(osc_link "file://${current_dir}" "$dir")
     if [ -n "$git_info" ]; then
-        l2+="${dir} ${git_info}"
-        [ -n "$last_commit_time" ] && l2+=" · ${C_GRAY}${last_commit_time}${C_RESET}"
-        [ -n "$commits_today" ] && l2+=" · ${C_GREEN}${commits_today} today${C_RESET}"
+        local repo_url branch
+        repo_url=$(get_repo_url "$current_dir")
+        branch=$(git -C "$current_dir" branch --show-current 2>/dev/null)
+        [ -n "$repo_url" ] && [ -n "$branch" ] && git_info=$(osc_link "${repo_url}/tree/${branch}" "$git_info")
+        s2+=("0${T}${SEP}${T}${dir_link} ${git_info}${C_RESET}")
+
+        local pr_num pr_checks pr_review pr_url
+        IFS=$'\t' read -r pr_num pr_checks pr_review pr_url <<< "$(get_pr_status "$current_dir" "$branch")"
+        if [[ "$pr_num" =~ ^[0-9]+$ ]]; then
+            local pr_seg="PR #${pr_num}"
+            case "$pr_checks" in
+                pass)    pr_seg+=" ${C_GREEN}✓${C_RESET}" ;;
+                fail)    pr_seg+=" ${C_ALERT}✗${C_RESET}" ;;
+                pending) pr_seg+=" ${C_YELLOW}◌${C_RESET}" ;;
+            esac
+            case "$pr_review" in
+                APPROVED)          pr_seg+=" ${C_GREEN}approved${C_RESET}" ;;
+                CHANGES_REQUESTED) pr_seg+=" ${C_RED}changes${C_RESET}" ;;
+            esac
+            s2+=("2${T}${D}${T}${C_BLUE}$(osc_link "$pr_url" "$pr_seg")${C_RESET}")
+        fi
+        [ -n "$last_commit_time" ] && s2+=("7${T}${D}${T}${C_GRAY}${last_commit_time}${C_RESET}")
+        [ -n "$commits_today" ] && s2+=("8${T}${D}${T}${C_GREEN}${commits_today} today${C_RESET}")
     else
-        l2+="◈ ${dir}"
+        s2+=("0${T}${SEP}${T}◈ ${dir_link}")
     fi
 
     if [ "$lines_added" -gt 0 ] || [ "$lines_removed" -gt 0 ]; then
-        l2+=" · "
+        local changes
         if [ "$lines_added" -gt 0 ] && [ "$lines_removed" -gt 0 ]; then
-            l2+="${C_GREEN}+${lines_added}${C_RESET}/${C_RED}-${lines_removed}${C_RESET}"
+            changes="${C_GREEN}+${lines_added}${C_RESET}/${C_RED}-${lines_removed}${C_RESET}"
         elif [ "$lines_added" -gt 0 ]; then
-            l2+="${C_GREEN}+${lines_added}${C_RESET}"
+            changes="${C_GREEN}+${lines_added}${C_RESET}"
         else
-            l2+="${C_RED}-${lines_removed}${C_RESET}"
+            changes="${C_RED}-${lines_removed}${C_RESET}"
         fi
+        s2+=("3${T}${D}${T}${changes}")
     fi
 
     # Section 2: Stats
@@ -2120,10 +2348,10 @@ main() {
     fi
 
     # Append sections with ┊ separators
-    [ -n "$stats_sec" ] && l2+="${SEP}${stats_sec}"
-    [ -n "$dev_cfg" ] && l2+="${SEP}${dev_cfg}"
+    [ -n "$stats_sec" ] && s2+=("9${T}${SEP}${T}${stats_sec}")
+    [ -n "$dev_cfg" ] && s2+=("4${T}${SEP}${T}${dev_cfg}")
 
-    out_lines+=("$l2"); out_types+=("n")
+    out_lines+=("$(fit_line "$line_width" "${s2[@]}")"); out_types+=("n")
 
     # --- Dynamic lines: Tools, Agents, Todos (only when active) ---
     local running_tools_count completed_tools_output
@@ -2220,15 +2448,16 @@ main() {
     fi
 
     # --- Render with rounded box-drawing gutter ---
-    local total=${#out_lines[@]}
+    local total=${#out_lines[@]} gutter_color="${C_GRAY}"
+    [[ "$l1" == *⚠* ]] && gutter_color="${C_RED}"
     for ((i=0; i<total; i++)); do
         local gutter
         if [ $i -eq 0 ]; then
-            gutter="${C_GRAY}╭${C_RESET}"
+            gutter="${gutter_color}╭${C_RESET}"
         elif [ $i -eq $((total - 1)) ]; then
-            gutter="${C_GRAY}╰${C_RESET}"
+            gutter="${gutter_color}╰${C_RESET}"
         else
-            gutter="${C_GRAY}│${C_RESET}"
+            gutter="${gutter_color}│${C_RESET}"
         fi
         printf "  %b %b\n" "$gutter" "${out_lines[$i]}"
     done
