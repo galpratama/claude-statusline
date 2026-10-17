@@ -480,7 +480,6 @@ Set `display.theme` in `~/.claude/statusline-config.json` to `catppuccin`, `toky
 - Current branch, dirty marker, sync status (`=`, `↑2`, `↓1`)
 - Added/removed files, last commit age, commits today
 - Open PR for the branch with CI checks and review state (`PR #18 ✓ approved`), via `gh`, refreshed in the background at most once a minute
-- Clickable links (OSC 8, in terminals that support them): folder → Finder, branch → repo tree, PR → pull request
 - Stash count (`⚑ 2 stash`, toggle `segments.git.show_stash`) and running Docker containers (`🐳 3`, toggle `segments.dev.show_docker`, refreshed in the background)
 
 ### Development Environment

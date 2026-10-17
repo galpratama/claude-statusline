@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-10-17 — Remove OSC 8 links
+- Claude Code strips OSC 8 in the statusline: dropped `osc_link`, `get_repo_url`, PR url field
+
 ## 2026-10-17 — Notifications, modes, docker & stash
 - macOS notifications (once per window/session): limit ≥90% or projected run-out, context ≥90%
 - Modes zen/compact/full via `--mode` or `STATUSLINE_MODE`

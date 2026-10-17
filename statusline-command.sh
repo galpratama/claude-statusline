@@ -1526,10 +1526,10 @@ make_bar() {
     printf '%s' "${bar}${C_RESET}"
 }
 
-# Visible width of a string with literal \033[..m color codes and \033]8 links
+# Visible width of a string with literal or raw \033[..m color codes
 vis_len() {
     local s
-    s=$(printf '%s' "$1" | sed -e 's/\\033\[[0-9;]*m//g' -e 's/\\033]8;;[^\\]*\\a//g' -e $'s/\033\\[[0-9;]*m//g')
+    s=$(printf '%s' "$1" | sed -e 's/\\033\[[0-9;]*m//g' -e $'s/\033\\[[0-9;]*m//g')
     printf '%s' "${#s}"
 }
 
@@ -1577,11 +1577,6 @@ fmt_cents() {
     printf '$%d.%02d' $(($1 / 100)) $(($1 % 100))
 }
 
-# OSC 8 hyperlink (BEL-terminated); terminals without support just show the text
-osc_link() {
-    printf '\\033]8;;%s\\a%s\\033]8;;\\a' "$1" "$2"
-}
-
 # Spend across all sessions: prints "<today cents> <last 7 days cents>".
 # Per-day ledger rows: session_id, baseline (cost when first seen that day), latest cost.
 # A session spanning midnight thus splits its cost between days; a cost reset (resume)
@@ -1616,16 +1611,16 @@ bg_cached() {
 }
 
 _fetch_pr() {
-    cd "$1" && gh pr view "$2" --json state,number,url,reviewDecision,statusCheckRollup --jq 'select(.state == "OPEN") |
+    cd "$1" && gh pr view "$2" --json state,number,reviewDecision,statusCheckRollup --jq 'select(.state == "OPEN") |
         ([.statusCheckRollup[]? | (.conclusion // .state // "")] ) as $c |
         (if ($c | length) == 0 then ""
          elif any($c[]; test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED")) then "fail"
          elif any($c[]; . == "" or test("PENDING|QUEUED|IN_PROGRESS|EXPECTED")) then "pending"
          else "pass" end) as $checks |
-        [.number, $checks, (.reviewDecision // ""), .url] | @tsv'
+        [.number, $checks, (.reviewDecision // "")] | @tsv'
 }
 
-# Open PR (not merged/closed) for the current branch via gh: "number<TAB>checks<TAB>review<TAB>url"
+# Open PR (not merged/closed) for the current branch via gh: "number<TAB>checks<TAB>review"
 get_pr_status() {
     local dir=$1 branch=$2
     command -v gh >/dev/null 2>&1 && [ -n "$branch" ] && [ "$branch" != "detached" ] || return
@@ -1647,20 +1642,6 @@ notify_once() {
     : > "$flag"
     osascript -e "display notification \"${3//\"/}\" with title \"${2//\"/}\" sound name \"Submarine\"" \
         </dev/null >/dev/null 2>&1 &
-}
-
-# https URL of the origin remote (GitHub/GitLab style), empty when unknown
-get_repo_url() {
-    local url rest
-    url=$(git -C "$1" remote get-url origin 2>/dev/null) || return
-    url=${url%.git}
-    case "$url" in
-        git@*:*) rest=${url#git@}; url="https://${rest%%:*}/${rest#*:}" ;;
-        ssh://git@*) url="https://${url#ssh://git@}" ;;
-        https://*) url=${url/\/\/*@/\/\/} ;;
-        *) return ;;
-    esac
-    printf '%s' "$url"
 }
 
 format_tool_target() {
@@ -2317,17 +2298,13 @@ main() {
     fi
 
     # Section 1: Git or folder + lines changed
-    local dir_link
-    dir_link=$(osc_link "file://${current_dir}" "$dir")
     if [ -n "$git_info" ]; then
-        local repo_url branch
-        repo_url=$(get_repo_url "$current_dir")
+        local branch
         branch=$(git -C "$current_dir" branch --show-current 2>/dev/null)
-        [ -n "$repo_url" ] && [ -n "$branch" ] && git_info=$(osc_link "${repo_url}/tree/${branch}" "$git_info")
-        s2+=("0${T}${SEP}${T}${dir_link} ${git_info}${C_RESET}")
+        s2+=("0${T}${SEP}${T}${dir} ${git_info}${C_RESET}")
 
-        local pr_num pr_checks pr_review pr_url
-        IFS=$'\t' read -r pr_num pr_checks pr_review pr_url <<< "$(get_pr_status "$current_dir" "$branch")"
+        local pr_num pr_checks pr_review
+        IFS=$'\t' read -r pr_num pr_checks pr_review <<< "$(get_pr_status "$current_dir" "$branch")"
         if [[ "$pr_num" =~ ^[0-9]+$ ]]; then
             local pr_seg="PR #${pr_num}"
             case "$pr_checks" in
@@ -2339,7 +2316,7 @@ main() {
                 APPROVED)          pr_seg+=" ${C_GREEN}approved${C_RESET}" ;;
                 CHANGES_REQUESTED) pr_seg+=" ${C_RED}changes${C_RESET}" ;;
             esac
-            s2+=("2${T}${D}${T}${C_BLUE}$(osc_link "$pr_url" "$pr_seg")${C_RESET}")
+            s2+=("2${T}${D}${T}${C_BLUE}${pr_seg}${C_RESET}")
         fi
         if [ "$SHOW_STASH" = "true" ]; then
             local stash_count
@@ -2349,7 +2326,7 @@ main() {
         [ -n "$last_commit_time" ] && s2+=("7${T}${D}${T}${C_GRAY}${last_commit_time}${C_RESET}")
         [ -n "$commits_today" ] && s2+=("8${T}${D}${T}${C_GREEN}${commits_today} today${C_RESET}")
     else
-        s2+=("0${T}${SEP}${T}◈ ${dir_link}")
+        s2+=("0${T}${SEP}${T}◈ ${dir}")
     fi
 
     if [ "$lines_added" -gt 0 ] || [ "$lines_removed" -gt 0 ]; then

@@ -29,7 +29,7 @@ This is a custom statusline for Claude Code that displays AI model information, 
 - `get_git_info` / `get_git_metrics` - one `git status --porcelain=v2 --branch` plus `log -1` and `rev-list --count --since=midnight`
 - `format_rate_window`, `format_prompt_cache` - render `.rate_limits` (with run-out projection) and `.prompt_cache`
 - `grad_color` / `make_bar` - truecolor gradient + 1/8-cell bar (16-color fallback); `fit_line` - drops segments by priority to fit `$COLUMNS`. Lines 1-2 are built as `prio<TAB>sep<TAB>text` segments
-- `sparkline` (history in `/tmp/claude-hist-{session_id}`), `cost_ledger` (per-day spend in `~/.cache/claude-statusline/cost-YYYY-MM-DD.tsv`), `get_pr_status` (background `gh`, cache `/tmp/claude-statusline-pr-<cksum>`), `osc_link` / `get_repo_url`
+- `sparkline` (history in `/tmp/claude-hist-{session_id}`), `cost_ledger` (per-day spend in `~/.cache/claude-statusline/cost-YYYY-MM-DD.tsv`), `get_pr_status` (background `gh`, cache `/tmp/claude-statusline-pr-<cksum>`)
 - Theme palette is resolved before the `readonly` color constants (one extra `jq` on the config)
 - `bg_cached` - background-refreshed command cache (PR via `_fetch_pr`, docker); `notify_once` - osascript notification keyed by a flag in `/tmp/claude-statusline-notified-*`
 - Mode (`zen`/`compact`/`full`): `STATUSLINE_MODE` or `~/.cache/claude-statusline/mode`, set with `--mode`
