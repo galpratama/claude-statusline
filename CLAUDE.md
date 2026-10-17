@@ -26,8 +26,11 @@ This is a custom statusline for Claude Code that displays AI model information, 
 - `load_config` - all segment toggles in one `jq` call over `~/.claude/statusline-config.json`
 - `parse_transcript` - only `tool_use` lines are JSON-parsed; `tool_result` IDs are pulled by regex (tool output is most of a transcript's bytes). Uses `rg` via `_tsearch` when available, BSD grep is ~20x slower on big transcripts
 - Subagents: `Agent` (and legacy `Task`) tool uses. Background agents get an immediate "Async agent launched" result and count as running until a `<task-notification>` with their `<tool-use-id>` appears
-- `get_git_info` / `get_git_metrics` - one `git status --porcelain=v2 --branch` plus `log -1` and `rev-list --count --since=midnight`
-- `format_rate_window`, `format_prompt_cache` - render `.rate_limits` (with run-out projection) and `.prompt_cache`
+- `get_git_info` / `get_git_metrics` - one `git status --porcelain=v2 --branch --show-stash` (prints `branch<TAB>stash<TAB>info`) plus `log -1` and `rev-list --count --since=midnight`
+- bash 3.2 gotcha: in `IFS=$'\t' read ... <<< "$(cmd)"` the IFS also applies inside `cmd`; capture into a variable first
+- `grad_color` sets `GRAD` instead of printing (no subshell per bar cell)
+- `format_rate_window`, `format_prompt_cache` - render `.rate_limits` (values come from the main jq call; run-out projection) and `.prompt_cache`
+- `get_account_info` - account + plan from `$CLAUDE_CONFIG_DIR/.claude.json` (else `~/.claude.json`); `record_account_quota` / `suggest_account` share limits across accounts via `~/.cache/claude-statusline/quota-<account>.tsv`
 - `grad_color` / `make_bar` - truecolor gradient + 1/8-cell bar (16-color fallback); `fit_line` - drops segments by priority to fit `$COLUMNS`. Lines 1-2 are built as `prio<TAB>sep<TAB>text` segments
 - `sparkline` (history in `/tmp/claude-hist-{session_id}`), `cost_ledger` (per-day spend in `~/.cache/claude-statusline/cost-YYYY-MM-DD.tsv`), `get_pr_status` (background `gh`, cache `/tmp/claude-statusline-pr-<cksum>`)
 - Theme palette is resolved before the `readonly` color constants (one extra `jq` on the config)

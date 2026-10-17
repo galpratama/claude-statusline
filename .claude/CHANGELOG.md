@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-17 — Multi-account + speed (~0.63s → ~0.29s)
+- Account badge (`@naira`, per-account color) from `CLAUDE_CONFIG_DIR`; plan label now per account (was always the main account, cache shared)
+- Shared per-account quota; suggests the least-used account near a limit (`⇄ @azura 12%`)
+- Speed: one jq for transcript fields (was ~12), branch+stash from `git status --show-stash`, config counts only when shown, merged jq in subscription/servers/MCP, `format_k` without awk/sed, `grad_color` without subshells, server detection via `bg_cached`
+- Fix: `ignored_ports` from config is now honored (nginx:80 was shown despite being ignored)
+- Removed unused `json_file_get`
+
 ## 2026-10-17 — Config path resolved from script dir
 
 `STATUSLINE_CONFIG_FILE` was hardcoded to `~/Scripts/claude-statusline/`, which

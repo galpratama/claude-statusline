@@ -453,6 +453,9 @@ This controls what the statusline displays and how it behaves. See [Customizatio
 ### Alerts
 Context ≥85%, cache expiring within 5 minutes, a usage limit ≥90% or projected to run out are shown bold with `⚠`, and the gutter turns red.
 
+### Multiple Accounts
+Sessions launched with `CLAUDE_CONFIG_DIR` (one config dir per account) show the account (`@naira`, the email's local part) in a stable per-account color, and the plan label comes from that account. Each account records its last-seen limits in `~/.cache/claude-statusline/quota-<account>.tsv`; when the current account nears a limit (5h ≥80% or projected to run out, 7d ≥90%), the line suggests the other account with the most 5h headroom (`⇄ @azura 12%`). A window past its reset counts as 0%. The badge appears once two or more accounts have reported.
+
 ### Notifications
 A macOS notification (once per usage window / session) when a usage limit hits 90% or is projected to run out before it resets, and when context reaches 90%. Disable with `"features": {"notifications": false}`.
 
@@ -489,7 +492,7 @@ Set `display.theme` in `~/.claude/statusline-config.json` to `catppuccin`, `toky
 - Subscription renewal tracking
 
 ### Performance
-Renders in ~0.4s, even on long sessions: input and config are each read with a single `jq` call, git info uses one `git status --porcelain=v2` call, and the transcript scan only JSON-parses tool calls. Install [ripgrep](https://github.com/BurntSushi/ripgrep) for the fastest transcript scanning on very large sessions.
+Renders in ~0.3s, even on long sessions: input, config and the transcript summary are each read with a single `jq` call, git info (incl. branch and stash) uses one `git status --porcelain=v2 --show-stash` call, slow probes (servers, PR, docker) refresh in the background, and the transcript scan only JSON-parses tool calls. Install [ripgrep](https://github.com/BurntSushi/ripgrep) for the fastest transcript scanning on very large sessions.
 
 ## Customization
 

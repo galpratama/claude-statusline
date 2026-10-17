@@ -49,6 +49,9 @@ else
     readonly C_GREEN="\033[32m" C_YELLOW="\033[33m" C_RED="\033[31m" C_GRAY="\033[90m"
     GRAD_LO="80 200 120" GRAD_MID="235 195 70" GRAD_HI="240 80 80"
 fi
+read -r LO_R LO_G LO_B <<< "$GRAD_LO"
+read -r MID_R MID_G MID_B <<< "$GRAD_MID"
+read -r HI_R HI_G HI_B <<< "$GRAD_HI"
 readonly C_RESET="\033[0m"
 readonly C_ALERT="\033[1m${C_RED}"
 readonly C_WARN="\033[1m${C_YELLOW}"
@@ -56,18 +59,6 @@ readonly C_WARN="\033[1m${C_YELLOW}"
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
-
-# Get JSON value from file with default fallback
-json_file_get() {
-    local file="$1"
-    local path="$2"
-    local default="${3:-}"
-    if [ -f "$file" ]; then
-        jq -r "$path // empty" "$file" 2>/dev/null || echo "$default"
-    else
-        echo "$default"
-    fi
-}
 
 # Format number in k/M notation with two decimal places
 format_k() {
@@ -79,23 +70,14 @@ format_k() {
         return
     fi
 
-    if [ "$num" -ge 1000000 ]; then
-        # Use awk instead of bc for better reliability
-        local millions
-        millions=$(awk -v n="$num" 'BEGIN { printf "%.2f", n/1000000 }')
-        # Remove trailing zeros and decimal point if needed
-        millions=$(echo "$millions" | sed 's/\.00$//' | sed 's/\(\.[0-9]\)0$/\1/' | sed 's/\.$//')
-        echo "${millions}M"
-    elif [ "$num" -ge 1000 ]; then
-        # Use awk instead of bc for better reliability
-        local thousands
-        thousands=$(awk -v n="$num" 'BEGIN { printf "%.2f", n/1000 }')
-        # Remove trailing zeros and decimal point if needed
-        thousands=$(echo "$thousands" | sed 's/\.00$//' | sed 's/\(\.[0-9]\)0$/\1/' | sed 's/\.$//')
-        echo "${thousands}k"
-    else
-        echo "$num"
-    fi
+    local div suffix h frac
+    if [ "$num" -ge 1000000 ]; then div=1000000 suffix=M
+    elif [ "$num" -ge 1000 ]; then div=1000 suffix=k
+    else echo "$num"; return; fi
+    h=$(( (num * 100 + div / 2) / div ))
+    printf -v frac '%02d' $((h % 100))
+    frac=${frac%0}; frac=${frac%0}
+    echo "$((h / 100))${frac:+.$frac}${suffix}"
 }
 
 # Convert string boolean to bash boolean (0/1)
@@ -1090,9 +1072,9 @@ get_subscription_info() {
     [ ! -f "$STATUSLINE_CONFIG_FILE" ] && return
 
     local subscription_type renewal_date renewal_day
-    subscription_type=$(json_file_get "$STATUSLINE_CONFIG_FILE" ".subscriptions.\"$provider\".type" "")
-    renewal_date=$(json_file_get "$STATUSLINE_CONFIG_FILE" ".subscriptions.\"$provider\".renewal_date" "")
-    renewal_day=$(json_file_get "$STATUSLINE_CONFIG_FILE" ".subscriptions.\"$provider\".renewal_day" "")
+    { IFS= read -r subscription_type; IFS= read -r renewal_date; IFS= read -r renewal_day; } < <(
+        jq -r --arg p "$provider" '.subscriptions[$p] // {} | (.type // ""), (.renewal_date // ""), (.renewal_day // "" | tostring)' \
+            "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
 
     [ -z "$subscription_type" ] || [ -z "$renewal_date" ] && return
 
@@ -1225,22 +1207,18 @@ detect_dev_environment() {
 # ============================================================================
 
 detect_running_servers() {
-    local server_detection
-    server_detection=$(json_file_get "$STATUSLINE_CONFIG_FILE" '.features.server_detection' "true")
-    [ "$server_detection" != "true" ] && return
-
     local -a listened_ports ignored_ports active_servers
+    local server_detection="true" listened="" ignored_list=""
 
     if [ -f "$STATUSLINE_CONFIG_FILE" ]; then
-        # Read ports into arrays (compatible with bash 3.x and zsh)
-        while IFS= read -r port; do
-            [ -n "$port" ] && listened_ports+=("$port")
-        done < <(jq -r '.features.listened_ports[]? // empty' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
-
-        while IFS= read -r port; do
-            [ -n "$port" ] && ignored_ports+=("$port")
-        done < <(jq -r '.features.ignored_ports[]? // empty' "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
+        { IFS= read -r server_detection; IFS= read -r listened; IFS= read -r ignored_list; } < <(
+            jq -r '.features // {} | (.server_detection | if . == null then "true" else tostring end),
+                ((.listened_ports // []) | map(tostring) | join(" ")), ((.ignored_ports // []) | map(tostring) | join(" "))' \
+                "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
+        listened_ports=($listened)
+        ignored_ports=($ignored_list)
     fi
+    [ "$server_detection" != "true" ] && return
 
     # Default ports
     [ ${#listened_ports[@]} -eq 0 ] && listened_ports=(80 3000 3001 3306 4200 5173 5174 5432 6379 8000 8001 8080 8888 9000)
@@ -1339,50 +1317,14 @@ count_rules() {
 }
 
 count_mcp_servers() {
-    local cwd="$1"
-    local count=0
-    local home_dir="$HOME"
-    local claude_dir="${home_dir}/.claude"
-
-    # User settings: ~/.claude/settings.json
-    if [ -f "${claude_dir}/settings.json" ]; then
-        local user_count
-        user_count=$(jq -r '.mcpServers // {} | keys | length' "${claude_dir}/settings.json" 2>/dev/null || echo "0")
-        count=$((count + user_count))
-    fi
-
-    # User claude.json: ~/.claude.json
-    if [ -f "${home_dir}/.claude.json" ]; then
-        local json_count
-        json_count=$(jq -r '.mcpServers // {} | keys | length' "${home_dir}/.claude.json" 2>/dev/null || echo "0")
-        count=$((count + json_count))
-    fi
-
-    # Project scope
-    if [ -n "$cwd" ]; then
-        # {cwd}/.mcp.json
-        if [ -f "${cwd}/.mcp.json" ]; then
-            local proj_count
-            proj_count=$(jq -r '.mcpServers // {} | keys | length' "${cwd}/.mcp.json" 2>/dev/null || echo "0")
-            count=$((count + proj_count))
-        fi
-
-        # {cwd}/.claude/settings.json
-        if [ -f "${cwd}/.claude/settings.json" ]; then
-            local proj_settings_count
-            proj_settings_count=$(jq -r '.mcpServers // {} | keys | length' "${cwd}/.claude/settings.json" 2>/dev/null || echo "0")
-            count=$((count + proj_settings_count))
-        fi
-
-        # {cwd}/.claude/settings.local.json
-        if [ -f "${cwd}/.claude/settings.local.json" ]; then
-            local local_count
-            local_count=$(jq -r '.mcpServers // {} | keys | length' "${cwd}/.claude/settings.local.json" 2>/dev/null || echo "0")
-            count=$((count + local_count))
-        fi
-    fi
-
-    echo "$count"
+    local cwd="$1" f
+    local -a files=()
+    for f in "${HOME}/.claude/settings.json" "${HOME}/.claude.json" \
+        ${cwd:+"${cwd}/.mcp.json" "${cwd}/.claude/settings.json" "${cwd}/.claude/settings.local.json"}; do
+        [ -f "$f" ] && files+=("$f")
+    done
+    [ ${#files[@]} -eq 0 ] && { echo 0; return; }
+    jq -n '[inputs | .mcpServers // {} | keys | length] | add // 0' "${files[@]}" 2>/dev/null || echo 0
 }
 
 count_hooks() {
@@ -1492,22 +1434,23 @@ short_tool_name() {
 }
 
 # Green → yellow (70) → red (100) color for a 0-100 value; 16-color thresholds without truecolor
+# Sets GRAD (no subshell: it runs once per bar cell)
 grad_color() {
     local p=$1 r1 g1 b1 r2 g2 b2 t span
     [ "$p" -gt 100 ] && p=100
     [ "$p" -lt 0 ] && p=0
     if [ "$TRUECOLOR" = 0 ]; then
-        if [ "$p" -ge 90 ]; then printf '%s' "$C_RED"
-        elif [ "$p" -ge 70 ]; then printf '%s' "$C_YELLOW"
-        else printf '%s' "$C_GREEN"; fi
+        if [ "$p" -ge 90 ]; then GRAD=$C_RED
+        elif [ "$p" -ge 70 ]; then GRAD=$C_YELLOW
+        else GRAD=$C_GREEN; fi
         return
     fi
     if [ "$p" -le 70 ]; then
-        read -r r1 g1 b1 <<< "$GRAD_LO"; read -r r2 g2 b2 <<< "$GRAD_MID"; t=$p; span=70
+        r1=$LO_R g1=$LO_G b1=$LO_B r2=$MID_R g2=$MID_G b2=$MID_B t=$p span=70
     else
-        read -r r1 g1 b1 <<< "$GRAD_MID"; read -r r2 g2 b2 <<< "$GRAD_HI"; t=$((p - 70)); span=30
+        r1=$MID_R g1=$MID_G b1=$MID_B r2=$HI_R g2=$HI_G b2=$HI_B t=$((p - 70)) span=30
     fi
-    printf '\\033[38;2;%d;%d;%dm' $((r1 + (r2 - r1) * t / span)) $((g1 + (g2 - g1) * t / span)) $((b1 + (b2 - b1) * t / span))
+    printf -v GRAD '\\033[38;2;%d;%d;%dm' $((r1 + (r2 - r1) * t / span)) $((g1 + (g2 - g1) * t / span)) $((b1 + (b2 - b1) * t / span))
 }
 
 # Smooth bar with 1/8-cell precision; each cell is colored by its own position (gradient track)
@@ -1519,8 +1462,8 @@ make_bar() {
     for ((i = 0; i < width; i++)); do
         cell=$((eighths - i * 8))
         if [ "$cell" -le 0 ]; then bar+="${C_GRAY}·"; continue; fi
-        if [ "$TRUECOLOR" = 1 ]; then bar+=$(grad_color $(( (i * 100 + 50) / width )))
-        else bar+=$(grad_color "$pct"); fi
+        if [ "$TRUECOLOR" = 1 ]; then grad_color $(( (i * 100 + 50) / width )); else grad_color "$pct"; fi
+        bar+=$GRAD
         if [ "$cell" -ge 8 ]; then bar+="█"; else bar+="${parts[$cell]}"; fi
     done
     printf '%s' "${bar}${C_RESET}"
@@ -1715,14 +1658,15 @@ _git() {
 get_git_info() {
     local GIT_DIR_ARG="$1"
     local porcelain
-    porcelain=$(_git status --porcelain=v2 --branch) || return
+    porcelain=$(_git status --porcelain=v2 --branch --show-stash) || return
 
-    local branch="" has_upstream="" ahead=0 behind=0 status="" added=0 removed=0
+    local branch="" has_upstream="" ahead=0 behind=0 status="" added=0 removed=0 stash=0
     local line xy
     while IFS= read -r line; do
         case "$line" in
             "# branch.head "*)     branch=${line#"# branch.head "} ;;
             "# branch.upstream "*) has_upstream=1 ;;
+            "# stash "*)           stash=${line#"# stash "} ;;
             "# branch.ab "*)
                 read -r _ _ ahead behind <<< "$line"
                 ahead=${ahead#+}; behind=${behind#-} ;;
@@ -1769,7 +1713,8 @@ get_git_info() {
         [ "$removed" -gt 0 ] && git_info+=$(printf "${C_RED}-%s" "$removed")
     fi
 
-    echo "$git_info"
+    # "branch<TAB>stash count<TAB>formatted info"
+    printf '%s\t%s\t%s\n' "$branch" "$stash" "$git_info"
 }
 
 get_git_metrics() {
@@ -1853,16 +1798,11 @@ format_duration() {
 # Echoes nothing when the window is absent (non-subscribers / pre-first-response).
 # Projects the run-out time from the burn rate since the window started; ⚠ when it beats the reset.
 format_rate_window() {
-    local label="$1" path="$2" input="$3" now="$4" window_secs="$5" eta_fmt="$6"
-
-    local pct resets
-    { IFS= read -r pct; IFS= read -r resets; } < <(
-        jq -r "${path} // {} | (.used_percentage // \"\" | tostring), (.resets_at // \"\" | tostring)" <<< "$input" 2>/dev/null)
-    pct=${pct%.*}; resets=${resets%.*}
+    local label="$1" pct="$2" resets="$3" now="$4" window_secs="$5" eta_fmt="$6"
     [[ ! "$pct" =~ ^[0-9]+$ ]] && return
 
     local color seg eta=""
-    color=$(grad_color "$pct")
+    grad_color "$pct"; color=$GRAD
     if [[ "$resets" =~ ^[0-9]+$ ]] && [ "$resets" -gt "$now" ]; then
         # Skip the first 1/30 of a window (10m of 5h): too little data for a stable rate
         local elapsed=$((now - (resets - window_secs)))
@@ -1890,18 +1830,53 @@ format_rate_window() {
 
 # Claude plan from the OAuth account in ~/.claude.json, e.g. "Team 5x", "Max 20x", "Pro".
 # Cached in /tmp and refreshed only when ~/.claude.json changes.
-get_plan_label() {
-    local account_file="${HOME}/.claude.json" cache_file="/tmp/claude-statusline-plan"
+# "account<TAB>plan" for the active account (CLAUDE_CONFIG_DIR, else ~/.claude.json), e.g.
+# "naira<TAB>Team 5x"; account is the email's local part. Cached until the account file changes.
+get_account_info() {
+    local account_file="${CLAUDE_CONFIG_DIR:+${CLAUDE_CONFIG_DIR}/}.claude.json" cache_file
+    [ -n "$CLAUDE_CONFIG_DIR" ] || account_file="${HOME}/.claude.json"
     [ -f "$account_file" ] || return
+    cache_file="/tmp/claude-statusline-account-$(printf '%s' "$account_file" | cksum | cut -d' ' -f1)"
     if [ ! -f "$cache_file" ] || [ "$account_file" -nt "$cache_file" ]; then
         jq -r '
             .oauthAccount // {} |
             ({claude_max: "Max", claude_pro: "Pro", claude_team: "Team", claude_enterprise: "Enterprise"}[.organizationType // ""] // "") as $plan |
             ((.userRateLimitTier // "") | capture("max_(?<x>[0-9]+x)")?.x // "") as $mult |
-            [$plan, $mult] | map(select(. != "")) | join(" ")
+            [(.emailAddress // "" | split("@")[0]), ([$plan, $mult] | map(select(. != "")) | join(" "))] | @tsv
         ' "$account_file" > "$cache_file" 2>/dev/null
     fi
     cat "$cache_file" 2>/dev/null
+}
+
+# Stable per-account color so terminals on different accounts are told apart at a glance
+account_color() {
+    local -a colors=("$C_CYAN" "$C_PURPLE" "$C_GREEN" "$C_YELLOW" "$C_BLUE")
+    printf '%s' "${colors[$(( $(printf '%s' "$1" | cksum | cut -d' ' -f1) % 5 ))]}"
+}
+
+# Each account records its last-seen limits ("5h% 5h_reset 7d% 7d_reset") so any session can
+# point to the least-used other account. A window past its reset counts as 0%.
+record_account_quota() {
+    local dir="${HOME}/.cache/claude-statusline"
+    [ -n "$1" ] && [[ "$2" =~ ^[0-9]+$ ]] && mkdir -p "$dir" 2>/dev/null || return
+    printf '%s %s %s %s\n' "$2" "${3:-0}" "${4:-0}" "${5:-0}" > "$dir/quota-$1.tsv"
+}
+
+# Prints "account 5h%" of the other account with the most 5h headroom (7d ≥90% excluded)
+suggest_account() {
+    local me=$1 now=$2 f name p5 r5 p7 r7 best="" best_p=101
+    for f in "${HOME}/.cache/claude-statusline"/quota-*.tsv; do
+        [ -f "$f" ] || continue
+        name=${f##*/quota-}; name=${name%.tsv}
+        [ "$name" = "$me" ] && continue
+        read -r p5 r5 p7 r7 < "$f"
+        [[ "$p5$r5$p7$r7" =~ ^[0-9]+$ ]] || continue
+        [ "$r5" -le "$now" ] && p5=0
+        [ "$r7" -le "$now" ] && p7=0
+        [ "$p7" -ge 90 ] && continue
+        [ "$p5" -lt "$best_p" ] && { best_p=$p5; best=$name; }
+    done
+    [ -n "$best" ] && printf '%s %s' "$best" "$best_p"
 }
 
 # Honcho memory activity for this session, written by locally patched Honcho hooks to
@@ -1968,6 +1943,7 @@ main() {
     local mcp_servers_count tools_count cache_creation_tokens cache_read_tokens
     local json_tool_calls json_files_edited json_bash_commands transcript_path effort_level
     local native_ctx_pct cache_hit_pct cache_expires_at cache_warm fast_mode thinking_on session_name api_duration
+    local five_pct five_resets seven_pct seven_resets
     {
         IFS= read -r current_dir; IFS= read -r model_raw; IFS= read -r model_id
         IFS= read -r total_input; IFS= read -r total_output; IFS= read -r context_size
@@ -1982,6 +1958,7 @@ main() {
         IFS= read -r native_ctx_pct; IFS= read -r cache_hit_pct; IFS= read -r cache_expires_at
         IFS= read -r cache_warm; IFS= read -r fast_mode; IFS= read -r thinking_on; IFS= read -r session_name
         IFS= read -r api_duration
+        IFS= read -r five_pct; IFS= read -r five_resets; IFS= read -r seven_pct; IFS= read -r seven_resets
     } < <(printf '%s' "$input" | jq -Rrs '
         (fromjson? // {}) as $in | $in |
         def v(p; d): ((p // d) | tostring);
@@ -2001,7 +1978,9 @@ main() {
         v(.prompt_cache.hit_ratio | numbers | . * 100 | floor; ""), v(.prompt_cache.expires_at | numbers | floor; ""),
         (.prompt_cache.warm | if . == null then "" else tostring end), v(.fast_mode; ""), v(.thinking.enabled; ""),
         v(.session_name | strings | gsub("[\n\t]"; " "); ""),
-        v(.cost.total_api_duration_ms | numbers | floor; "")
+        v(.cost.total_api_duration_ms | numbers | floor; ""),
+        v(.rate_limits.five_hour.used_percentage | numbers | floor; ""), v(.rate_limits.five_hour.resets_at | numbers | floor; ""),
+        v(.rate_limits.seven_day.used_percentage | numbers | floor; ""), v(.rate_limits.seven_day.resets_at | numbers | floor; "")
     ' 2>/dev/null)
     model=$(format_model_name "$model_raw")
     : "${mcp_servers_count:=0}" "${tools_count:=0}"
@@ -2071,37 +2050,53 @@ main() {
 
     # Detect servers
     local running_servers
-    running_servers=$(detect_running_servers)
+    # netstat + lsof per port is slow; a minute-old answer is fine for "is my dev server up"
+    running_servers=$(bg_cached "servers-$(id -u)" detect_running_servers)
 
     # Count configs (MCP, Rules, Hooks)
-    local claude_md_count rules_count mcp_count_new hooks_count_new
-    claude_md_count=$(count_claude_md_files "$current_dir")
-    rules_count=$(count_rules "$current_dir")
-    mcp_count_new=$(count_mcp_servers "$current_dir")
-    hooks_count_new=$(count_hooks "$current_dir")
-
-    # Use counted MCP if JSON count is 0
-    [ "$mcp_servers_count" -eq 0 ] && mcp_servers_count="$mcp_count_new"
+    local claude_md_count=0 rules_count=0 hooks_count_new=0
+    [ "$SHOW_CLAUDE_MD" = "true" ] && claude_md_count=$(count_claude_md_files "$current_dir")
+    [ "$SHOW_RULES" = "true" ] && rules_count=$(count_rules "$current_dir")
+    [ "$SHOW_HOOKS" = "true" ] && hooks_count_new=$(count_hooks "$current_dir")
+    [ "$mcp_servers_count" -eq 0 ] && mcp_servers_count=$(count_mcp_servers "$current_dir")
 
     # Parse transcript for tools, agents, todos
     local transcript_result_file
     transcript_result_file="/tmp/claude-transcript-result-${session_id}"
 
-    local running_tools_json running_agents_json todos_json completed_counts_json
+    # One jq call: fixed fields first, then one "name<TAB>count" line per top completed tool
+    local running_tools_count=0 tool_name tool_input tool_timestamp
+    local running_agents_count=0 agent_type agent_model agent_desc agent_timestamp
+    local todos_count=0 completed_count=0 active_todo completed_tools_output="" tname tcount
     if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
         parse_transcript "$transcript_path" "$transcript_result_file"
-        if [ -f "$transcript_result_file" ]; then
-            { IFS= read -r running_tools_json; IFS= read -r running_agents_json
-              IFS= read -r todos_json; IFS= read -r completed_counts_json; } < <(
-                jq -c '.running_tools // [], .running_agents // [], .todos // [], .completed_counts // []' "$transcript_result_file" 2>/dev/null)
-        fi
+        [ -f "$transcript_result_file" ] && {
+            IFS= read -r running_tools_count; IFS= read -r tool_name; IFS= read -r tool_input; IFS= read -r tool_timestamp
+            IFS= read -r running_agents_count; IFS= read -r agent_type; IFS= read -r agent_model
+            IFS= read -r agent_desc; IFS= read -r agent_timestamp
+            IFS= read -r todos_count; IFS= read -r completed_count; IFS= read -r active_todo
+            while IFS=$'\t' read -r tname tcount; do
+                if [ "$tname" = "+" ]; then
+                    completed_tools_output+="${C_GRAY}+${tcount}${C_RESET} "
+                elif [ -n "$tname" ]; then
+                    completed_tools_output+="✓ $(short_tool_name "$tname") ×${tcount} "
+                fi
+            done
+        } < <(jq -r '
+            def s: tostring | gsub("[\n\t]"; " ");
+            (.running_tools // []) as $t | (.running_agents // []) as $a
+            | (.todos // []) as $d | (.completed_counts // []) as $c
+            | ($t | length), ($t[0].name // "" | s), ($t[0].input // {} | tojson), ($t[0].timestamp // ""),
+              ($a | length), ($a[0].input.subagent_type // "unknown" | s), ($a[0].input.model // "" | s),
+              ($a[0].input.description // "" | s), ($a[0].timestamp // ""),
+              ($d | length), ([$d[] | select(.status == "completed")] | length),
+              ([$d[] | select(.status == "in_progress")][0] // {} | .activeForm // .content // "" | s),
+              ($c[:3][] | "\(.name)\t\(.count)"), (if ($c | length) > 3 then "+\t\(($c | length) - 3)" else empty end)
+        ' "$transcript_result_file" 2>/dev/null)
     fi
-
-    # Default to empty arrays if not set
-    [ -z "$running_tools_json" ] && running_tools_json="[]"
-    [ -z "$running_agents_json" ] && running_agents_json="[]"
-    [ -z "$todos_json" ] && todos_json="[]"
-    [ -z "$completed_counts_json" ] && completed_counts_json="[]"
+    [[ "$running_tools_count" =~ ^[0-9]+$ ]] || running_tools_count=0
+    [[ "$running_agents_count" =~ ^[0-9]+$ ]] || running_agents_count=0
+    [[ "$todos_count" =~ ^[0-9]+$ ]] || todos_count=0
 
     # Estimate cost only when Claude Code doesn't report it
     local session_cost="$json_cost"
@@ -2129,7 +2124,7 @@ main() {
                 context_usage_pct=$((current_total_tokens * 100 / context_size))
             fi
 
-            context_usage_color=$(grad_color "$context_usage_pct")
+            grad_color "$context_usage_pct"; context_usage_color=$GRAD
         fi
     fi
 
@@ -2148,8 +2143,10 @@ main() {
     fi
 
     # Git info
-    local git_info git_metrics last_commit_time commits_today
-    git_info=$(get_git_info "$current_dir")
+    local git_info git_metrics last_commit_time commits_today branch="" stash_count=0 git_out
+    # Separate capture: bash 3.2 applies a `IFS=... read <<< "$(cmd)"` IFS inside cmd too
+    git_out=$(get_git_info "$current_dir")
+    IFS=$'\t' read -r branch stash_count git_info <<< "$git_out"
     git_metrics=$(get_git_metrics "$current_dir" "$current_time")
     last_commit_time=$(echo "$git_metrics" | cut -d'|' -f1)
     commits_today=$(echo "$git_metrics" | cut -d'|' -f2)
@@ -2161,9 +2158,10 @@ main() {
     # Subscription info
     local subscription_info provider_section
     subscription_info=$(get_subscription_info "$provider_name")
-    local provider_label="$provider_name" plan_label=""
-    [ "$provider_name" = "Claude" ] && plan_label=$(get_plan_label)
+    local provider_label="$provider_name" plan_label="" account_name=""
+    [ "$provider_name" = "Claude" ] && IFS=$'\t' read -r account_name plan_label <<< "$(get_account_info)"
     [ -n "$plan_label" ] && provider_label+=" ${plan_label}"
+    record_account_quota "$account_name" "$five_pct" "$five_resets" "$seven_pct" "$seven_resets"
     if [ -n "$subscription_info" ]; then
         provider_section=$(printf "${C_CYAN}%s${C_RESET} %s" "$provider_label" "$subscription_info")
     else
@@ -2232,6 +2230,11 @@ main() {
     [ "$fast_mode" = "true" ] && l1+=" ${C_YELLOW}↯ fast${C_RESET}"
     [ "$thinking_on" = "true" ] && l1+=" ${C_GRAY}✻${C_RESET}"
 
+    # Account badge only once more than one account has reported limits
+    local -a known_accounts=("${HOME}/.cache/claude-statusline"/quota-*.tsv)
+    [ -n "$account_name" ] && [ ${#known_accounts[@]} -gt 1 ] && \
+        l1="$(account_color "$account_name")@${account_name}${C_RESET} ${l1}"
+
     # Segments: "prio<TAB>separator<TAB>text"; fit_line drops high prio first on narrow terminals
     local T=$'\t' D=" · "
     local -a s1=("0${T}${T}${l1}" "8${T}${D}${T}${provider_section}"
@@ -2264,12 +2267,21 @@ main() {
     [ -n "$cache_section" ] && s1+=("4${T}${SEP}${T}${cache_section}")
     if [ "$SHOW_RATE_LIMIT" = "true" ]; then
         local five seven
-        five=$(format_rate_window "5h" ".rate_limits.five_hour" "$input" "$current_time" 18000 "+%H:%M")
-        seven=$(format_rate_window "7d" ".rate_limits.seven_day" "$input" "$current_time" 604800 "+%a %H:%M")
+        five=$(format_rate_window "5h" "$five_pct" "$five_resets" "$current_time" 18000 "+%H:%M")
+        seven=$(format_rate_window "7d" "$seven_pct" "$seven_resets" "$current_time" 604800 "+%a %H:%M")
         [ -n "$five" ] && s1+=("2${T}${SEP}${T}${C_GRAY}◴${C_RESET} ${five}")
         if [ -n "$seven" ]; then
             if [ -n "$five" ]; then s1+=("3${T}${D}${T}${seven}")
             else s1+=("3${T}${SEP}${T}${C_GRAY}◴${C_RESET} ${seven}"); fi
+        fi
+
+        # Near a limit: point to the other account with the most 5h headroom
+        # (for a 5h squeeze it must be at least 20 points lower to be worth switching)
+        if [ -n "$account_name" ] && { [ "${five_pct:-0}" -ge 80 ] || [ "${seven_pct:-0}" -ge 90 ] || [[ "$five" == *"→ full"* ]]; }; then
+            local alt_name alt_pct
+            read -r alt_name alt_pct <<< "$(suggest_account "$account_name" "$current_time")"
+            [ -n "$alt_name" ] && { [ "${seven_pct:-0}" -ge 90 ] || [ $((alt_pct + 20)) -le "${five_pct:-0}" ]; } && \
+                s1+=("1${T} ${T}${C_GRAY}⇄${C_RESET} $(account_color "$alt_name")@${alt_name}${C_RESET} ${C_GRAY}${alt_pct}%${C_RESET}")
         fi
     fi
 
@@ -2299,8 +2311,6 @@ main() {
 
     # Section 1: Git or folder + lines changed
     if [ -n "$git_info" ]; then
-        local branch
-        branch=$(git -C "$current_dir" branch --show-current 2>/dev/null)
         s2+=("0${T}${SEP}${T}${dir} ${git_info}${C_RESET}")
 
         local pr_num pr_checks pr_review
@@ -2318,11 +2328,8 @@ main() {
             esac
             s2+=("2${T}${D}${T}${C_BLUE}${pr_seg}${C_RESET}")
         fi
-        if [ "$SHOW_STASH" = "true" ]; then
-            local stash_count
-            stash_count=$(git -C "$current_dir" stash list 2>/dev/null | grep -c .)
-            [ "$stash_count" -gt 0 ] && s2+=("6${T}${D}${T}${C_YELLOW}⚑ ${stash_count} stash${C_RESET}")
-        fi
+        [ "$SHOW_STASH" = "true" ] && [ "${stash_count:-0}" -gt 0 ] && \
+            s2+=("6${T}${D}${T}${C_YELLOW}⚑ ${stash_count} stash${C_RESET}")
         [ -n "$last_commit_time" ] && s2+=("7${T}${D}${T}${C_GRAY}${last_commit_time}${C_RESET}")
         [ -n "$commits_today" ] && s2+=("8${T}${D}${T}${C_GREEN}${commits_today} today${C_RESET}")
     else
@@ -2387,33 +2394,14 @@ main() {
     out_lines+=("$(fit_line "$line_width" "${s2[@]}")")
 
     # --- Dynamic lines: Tools, Agents, Todos (only when active) ---
-    local running_tools_count completed_tools_output
-    running_tools_count=$(echo "$running_tools_json" | jq 'length' 2>/dev/null || echo "0")
-    completed_tools_output=""
-
-    # Top 3 completed tools, then "+N" for the rest
-    local tname tcount
-    while IFS=$'\t' read -r tname tcount; do
-        if [ "$tname" = "+" ]; then
-            completed_tools_output+="${C_GRAY}+${tcount}${C_RESET} "
-        elif [ -n "$tname" ]; then
-            completed_tools_output+="✓ $(short_tool_name "$tname") ×${tcount} "
-        fi
-    done < <(jq -r '(.[:3][] | "\(.name)\t\(.count)"), (if length > 3 then "+\t\(length - 3)" else empty end)' \
-        <<< "$completed_counts_json" 2>/dev/null)
-
     if [ "$SHOW_RUNNING_TOOLS" = "true" ] && { [ "$running_tools_count" -gt 0 ] || [ -n "$completed_tools_output" ]; }; then
         local lt=""
         local spinner
         spinner=$(get_spinner_frame)
 
         if [ "$running_tools_count" -gt 0 ]; then
-            local first_running_tool tool_name tool_input tool_target tool_timestamp elapsed
-            first_running_tool=$(echo "$running_tools_json" | jq -c '.[0]' 2>/dev/null)
-            tool_name=$(echo "$first_running_tool" | jq -r '.name // empty' 2>/dev/null)
-            tool_input=$(echo "$first_running_tool" | jq -c '.input // {}' 2>/dev/null)
+            local tool_target elapsed
             tool_target=$(format_tool_target "$tool_name" "$tool_input")
-            tool_timestamp=$(echo "$first_running_tool" | jq -r '.timestamp // empty' 2>/dev/null)
             [ -n "$tool_timestamp" ] && elapsed=$(format_elapsed_time "$tool_timestamp" "$current_time")
 
             lt+="${C_YELLOW}${spinner}${C_RESET} $(short_tool_name "$tool_name")"
@@ -2430,19 +2418,11 @@ main() {
         out_lines+=("$lt")
     fi
 
-    local running_agents_count
-    running_agents_count=$(echo "$running_agents_json" | jq 'length' 2>/dev/null || echo "0")
-
     if [ "$SHOW_AGENTS" = "true" ] && [ "$running_agents_count" -gt 0 ]; then
         local la="" spinner
         spinner=$(get_spinner_frame)
 
-        local first_agent agent_type agent_model agent_desc agent_timestamp elapsed
-        first_agent=$(echo "$running_agents_json" | jq -c '.[0]' 2>/dev/null)
-        agent_type=$(echo "$first_agent" | jq -r '.input.subagent_type // "unknown"' 2>/dev/null)
-        agent_model=$(echo "$first_agent" | jq -r '.input.model // empty' 2>/dev/null)
-        agent_desc=$(echo "$first_agent" | jq -r '.input.description // empty' 2>/dev/null)
-        agent_timestamp=$(echo "$first_agent" | jq -r '.timestamp // empty' 2>/dev/null)
+        local elapsed
         [ -n "$agent_timestamp" ] && elapsed=$(format_elapsed_time "$agent_timestamp" "$current_time")
 
         la+="${C_YELLOW}${spinner}${C_RESET} ${C_PURPLE}${agent_type}${C_RESET}"
@@ -2454,24 +2434,10 @@ main() {
         out_lines+=("$la")
     fi
 
-    local todos_count
-    todos_count=$(echo "$todos_json" | jq 'length' 2>/dev/null || echo "0")
-
     if [ "$SHOW_TODOS" = "true" ] && [ "$todos_count" -gt 0 ]; then
-        local ltodo="" in_progress_todo completed_count
-        in_progress_todo=$(echo "$todos_json" | jq -c '[.[] | select(.status == "in_progress")] | .[0] // empty' 2>/dev/null)
-        completed_count=$(echo "$todos_json" | jq '[.[] | select(.status == "completed")] | length' 2>/dev/null || echo "0")
-
-        ltodo+="▸ "
-        if [ -n "$in_progress_todo" ] && [ "$in_progress_todo" != "null" ]; then
-            local active_form content
-            active_form=$(echo "$in_progress_todo" | jq -r '.activeForm // empty' 2>/dev/null)
-            content=$(echo "$in_progress_todo" | jq -r '.content // empty' 2>/dev/null)
-            if [ -n "$active_form" ]; then
-                ltodo+="${C_YELLOW}${active_form}${C_RESET}"
-            elif [ -n "$content" ]; then
-                ltodo+="${C_YELLOW}${content}${C_RESET}"
-            fi
+        local ltodo="▸ "
+        if [ -n "$active_todo" ]; then
+            ltodo+="${C_YELLOW}${active_todo}${C_RESET}"
         else
             ltodo+="${C_GRAY}No active task${C_RESET}"
         fi
