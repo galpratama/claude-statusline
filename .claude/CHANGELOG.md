@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-17 — Security, tests, shellcheck
+- Security: state moved from shared `/tmp` to `~/.cache/claude-statusline/state` (0700); live files migrated; prune hook updated
+- Limit notifications name the best account to switch to
+- Snapshot test suite `tests/run.sh` (7 cases, frozen clock `STATUSLINE_NOW`)
+- shellcheck clean (was 62 findings); `cap` helper replaces 24 echo|tr forks
+- Fix: 13 config toggles (`show_provider`, `show_git`, `show_package_manager`, …) were read but ignored
+- Fix: plan/account label failed silently on jq 1.7 (`capture(...)?.x` is jq 1.8 syntax)
+- One clock read per render (`NOW`); new demo.png
+
 ## 2026-10-17 — Multi-account + speed (~0.63s → ~0.29s)
 - Account badge (`@naira`, per-account color) from `CLAUDE_CONFIG_DIR`; plan label now per account (was always the main account, cache shared)
 - Shared per-account quota; suggests the least-used account near a limit (`⇄ @azura 12%`)

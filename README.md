@@ -454,7 +454,7 @@ This controls what the statusline displays and how it behaves. See [Customizatio
 Context ≥85%, cache expiring within 5 minutes, a usage limit ≥90% or projected to run out are shown bold with `⚠`, and the gutter turns red.
 
 ### Multiple Accounts
-Sessions launched with `CLAUDE_CONFIG_DIR` (one config dir per account) show the account (`@naira`, the email's local part) in a stable per-account color, and the plan label comes from that account. Each account records its last-seen limits in `~/.cache/claude-statusline/quota-<account>.tsv`; when the current account nears a limit (5h ≥80% or projected to run out, 7d ≥90%), the line suggests the other account with the most 5h headroom (`⇄ @azura 12%`). A window past its reset counts as 0%. The badge appears once two or more accounts have reported.
+Sessions launched with `CLAUDE_CONFIG_DIR` (one config dir per account) show the account (`@naira`, the email's local part) in a stable per-account color, and the plan label comes from that account. Each account records its last-seen limits in `~/.cache/claude-statusline/quota-<account>.tsv`; when the current account nears a limit (5h ≥80% or projected to run out, 7d ≥90%), the line suggests the other account with the most 5h headroom (`⇄ @azura 12%`). Limit notifications name that account too. A window past its reset counts as 0%. The badge appears once two or more accounts have reported.
 
 ### Notifications
 A macOS notification (once per usage window / session) when a usage limit hits 90% or is projected to run out before it resets, and when context reaches 90%. Disable with `"features": {"notifications": false}`.

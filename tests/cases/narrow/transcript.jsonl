@@ -1,0 +1,9 @@
+{"timestamp":"2025-12-31T23:57:42.000Z","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{}}]}}
+{"message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"ok"}]}}
+{"timestamp":"2025-12-31T23:57:42.000Z","message":{"content":[{"type":"tool_use","id":"b2","name":"Bash","input":{}}]}}
+{"message":{"content":[{"type":"tool_result","tool_use_id":"b2","content":"ok"}]}}
+{"timestamp":"2025-12-31T23:57:42.000Z","message":{"content":[{"type":"tool_use","id":"b3","name":"Bash","input":{}}]}}
+{"message":{"content":[{"type":"tool_result","tool_use_id":"b3","content":"ok"}]}}
+{"timestamp":"2025-12-31T23:57:42.000Z","message":{"content":[{"type":"tool_use","id":"r1","name":"Read","input":{"file_path":"/x/src/auth.ts"}}]}}
+{"timestamp":"2025-12-31T23:57:42.000Z","message":{"content":[{"type":"tool_use","id":"a1","name":"Agent","input":{"subagent_type":"Explore","model":"haiku","description":"Find token refresh callers"}}]}}
+{"timestamp":"2025-12-31T23:57:42.000Z","message":{"content":[{"type":"tool_use","id":"td","name":"TodoWrite","input":{"todos":[{"content":"a","status":"completed"},{"content":"Wire refresh","activeForm":"Wiring up session refresh","status":"in_progress"},{"content":"c","status":"pending"}]}}]}}

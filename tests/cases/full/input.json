@@ -1,0 +1,51 @@
+{
+  "session_id": "t-full",
+  "session_name": "Refactor auth flow",
+  "transcript_path": "__CASE__/transcript.jsonl",
+  "workspace": {
+    "current_dir": "__WORK__"
+  },
+  "model": {
+    "id": "claude-opus-5-5",
+    "display_name": "Opus 5.5 (1M context)"
+  },
+  "effort": {
+    "level": "xhigh"
+  },
+  "thinking": {
+    "enabled": true
+  },
+  "fast_mode": true,
+  "cost": {
+    "total_cost_usd": 2.84,
+    "total_api_duration_ms": 1260000,
+    "total_lines_added": 212,
+    "total_lines_removed": 87
+  },
+  "context_window": {
+    "context_window_size": 1000000,
+    "used_percentage": 88,
+    "total_input_tokens": 900000,
+    "total_output_tokens": 40000,
+    "current_usage": {
+      "input_tokens": 4000,
+      "cache_creation_input_tokens": 6000,
+      "cache_read_input_tokens": 870000
+    }
+  },
+  "prompt_cache": {
+    "warm": true,
+    "hit_ratio": 0.96,
+    "expires_at": 1767225800
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 64,
+      "resets_at": 1767234000
+    },
+    "seven_day": {
+      "used_percentage": 23,
+      "resets_at": 1767563600
+    }
+  }
+}

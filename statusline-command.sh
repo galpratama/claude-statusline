@@ -15,7 +15,16 @@
 # ============================================================================
 
 readonly CONFIG_FILE="${HOME}/.claude/statusline-config.json"
-readonly STATUSLINE_CONFIG_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/statusline-config.json"
+STATUSLINE_CONFIG_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/statusline-config.json"
+readonly STATUSLINE_CONFIG_FILE
+# Per-session state and caches live in a private per-user dir, not shared /tmp
+# (predictable /tmp names could be pre-created as symlinks by another local user)
+readonly STATE_DIR="${HOME}/.cache/claude-statusline/state"
+# One clock read per render; STATUSLINE_NOW freezes time for the snapshot tests
+NOW=${STATUSLINE_NOW:-$(date +%s)}
+
+# shellcheck disable=SC2174  # only STATE_DIR itself needs to be private
+mkdir -p -m 700 "$STATE_DIR" 2>/dev/null
 
 # ============================================================================
 # COLOR DEFINITIONS
@@ -190,6 +199,16 @@ load_config() {
 # MODEL FORMATTING
 # ============================================================================
 
+# Sets CAP to $1 with its first letter uppercased (bash 3.2 has no ${var^})
+cap() {
+    local first=${1:0:1} lower=abcdefghijklmnopqrstuvwxyz upper=ABCDEFGHIJKLMNOPQRSTUVWXYZ before
+    if [ -n "$first" ]; then
+        before=${lower%%"$first"*}
+        [ ${#before} -lt 26 ] && first=${upper:${#before}:1}
+    fi
+    CAP="${first}${1:1}"
+}
+
 format_model_name() {
     local name="$1"
 
@@ -217,7 +236,7 @@ format_model_name() {
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
         local mode="${BASH_REMATCH[4]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         if [ -n "$mode" ]; then
             echo "${tier} ${major}.${minor} Agentic"
         else
@@ -230,11 +249,11 @@ format_model_name() {
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
         local mode="${BASH_REMATCH[4]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         if [ "$mode" = "thinking" ]; then
             mode="◉"
         else
-            mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+            cap "$mode"; mode=$CAP
         fi
         echo "${tier} ${major}.${minor} ${mode}"
 
@@ -243,7 +262,7 @@ format_model_name() {
         local major="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local tier="${BASH_REMATCH[3]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         echo "${tier} ${major}.${minor}"
 
     # Handle Claude model names with suffixes (e.g., claude-opus-4-6-thinking)
@@ -251,7 +270,7 @@ format_model_name() {
         local tier="${BASH_REMATCH[1]}"
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         echo "${tier} ${major}.${minor}"
 
     # Handle standard Claude model names with version dates
@@ -259,7 +278,7 @@ format_model_name() {
         local tier="${BASH_REMATCH[1]}"
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         echo "${tier} ${major}.${minor}"
 
     # Handle standard Claude model names
@@ -267,7 +286,7 @@ format_model_name() {
         local tier="${BASH_REMATCH[1]}"
         local major="${BASH_REMATCH[2]}"
         local minor="${BASH_REMATCH[3]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         if [ "$major" = "4" ] && [ -z "$minor" ]; then
             echo "${tier} 4.5"
         elif [ -n "$minor" ]; then
@@ -358,7 +377,7 @@ format_model_name() {
     elif [[ "$clean_name" =~ gemini-3-(pro|flash)(-image)?-preview ]]; then
         local tier="${BASH_REMATCH[1]}"
         local image="${BASH_REMATCH[2]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         if [ -n "$image" ]; then
             echo "Gemini 3 ${tier} Image"
         else
@@ -375,7 +394,7 @@ format_model_name() {
         local minor="${BASH_REMATCH[1]}"
         local tier="${BASH_REMATCH[2]}"
         local lite="${BASH_REMATCH[3]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         local display="Gemini 2.${minor} ${tier}"
         [ -n "$lite" ] && display+=" Lite"
         display+=" Computer"
@@ -384,7 +403,7 @@ format_model_name() {
         local minor="${BASH_REMATCH[1]}"
         local tier="${BASH_REMATCH[2]}"
         local lite="${BASH_REMATCH[3]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         local display="Gemini 2.${minor} ${tier}"
         [ -n "$lite" ] && display+=" Lite"
         echo "$display"
@@ -394,7 +413,7 @@ format_model_name() {
         local minor="${BASH_REMATCH[1]}"
         local tier="${BASH_REMATCH[2]}"
         local lite="${BASH_REMATCH[3]}"
-        tier="$(echo ${tier:0:1} | tr '[:lower:]' '[:upper:]')${tier:1}"
+        cap "$tier"; tier=$CAP
         local display="Gemini 2.${minor} ${tier}"
         [ -n "$lite" ] && display+=" Lite"
         echo "$display"
@@ -411,7 +430,7 @@ format_model_name() {
     elif [[ "$clean_name" =~ qwen3-([0-9]+)b-a22b-(thinking|instruct)(-[0-9]+)? ]]; then
         local size="${BASH_REMATCH[1]}"
         local mode="${BASH_REMATCH[2]}"
-        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        cap "$mode"; mode=$CAP
         echo "Qwen3 ${size}B ${mode}"
 
     # Handle Qwen3 VL Plus specifically (must come before generic pattern)
@@ -422,8 +441,8 @@ format_model_name() {
     elif [[ "$clean_name" =~ qwen3-(coder|max)-(flash|plus|preview) ]]; then
         local type="${BASH_REMATCH[1]}"
         local variant="${BASH_REMATCH[2]}"
-        type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
-        variant="$(echo ${variant:0:1} | tr '[:lower:]' '[:upper:]')${variant:1}"
+        cap "$type"; type=$CAP
+        cap "$variant"; variant=$CAP
         echo "Qwen3 ${type} ${variant}"
 
     # Handle Qwen3 simple variants (max only, since vl-plus handled above)
@@ -477,20 +496,20 @@ format_model_name() {
         local version="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local mode="${BASH_REMATCH[3]}"
-        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        cap "$mode"; mode=$CAP
         echo "Kimi K${version}.${minor} ${mode}"
     elif [[ "$clean_name" =~ kimi-k([0-9])\.([0-9]) ]]; then
         echo "Kimi K${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
     elif [[ "$clean_name" =~ kimi-k2-(thinking|instruct)(-[0-9]+)? ]]; then
         local mode="${BASH_REMATCH[1]}"
-        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        cap "$mode"; mode=$CAP
         echo "Kimi K2 ${mode}"
     elif [[ "$clean_name" =~ kimi-k2 ]]; then
         echo "Kimi K2"
     elif [[ "$clean_name" =~ kimi-k([0-9])-(thinking|instruct)(-[0-9]+)? ]]; then
         local version="${BASH_REMATCH[1]}"
         local mode="${BASH_REMATCH[2]}"
-        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        cap "$mode"; mode=$CAP
         echo "Kimi K${version} ${mode}"
 
     # Handle DeepSeek V3.x models
@@ -498,7 +517,7 @@ format_model_name() {
         local major="${BASH_REMATCH[1]}"
         local minor="${BASH_REMATCH[2]}"
         local mode="${BASH_REMATCH[3]}"
-        mode="$(echo ${mode:0:1} | tr '[:lower:]' '[:upper:]')${mode:1}"
+        cap "$mode"; mode=$CAP
         echo "DeepSeek V${major}.${minor} ${mode}"
 
     # Handle DeepSeek R1 and distill models
@@ -549,11 +568,11 @@ format_model_name() {
     elif [[ "$clean_name" =~ ^(devstral|codestral)-([0-9]+)$ ]]; then
         local type="${BASH_REMATCH[1]}"
         local version="${BASH_REMATCH[2]}"
-        type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
+        cap "$type"; type=$CAP
         echo "${type} ${version}"
     elif [[ "$clean_name" =~ ^mistral-(small|medium|large)(-latest|-[0-9]{4}-[0-9]{2})?$ ]]; then
         local size="${BASH_REMATCH[1]}"
-        size="$(echo ${size:0:1} | tr '[:lower:]' '[:upper:]')${size:1}"
+        cap "$size"; size=$CAP
         echo "Mistral ${size}"
     elif [[ "$clean_name" =~ ^mistral-large-([0-9])-.* ]]; then
         echo "Mistral Large ${BASH_REMATCH[1]}"
@@ -564,7 +583,7 @@ format_model_name() {
         local size="${BASH_REMATCH[2]}"
         local type="${BASH_REMATCH[3]}"
         local preview="${BASH_REMATCH[4]}"
-        type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
+        cap "$type"; type=$CAP
         local display="Llama 4"
         [ -n "$minor" ] && display+=".${minor}"
         display+=" ${size}B ${type}"
@@ -577,7 +596,7 @@ format_model_name() {
         local minor="${BASH_REMATCH[2]}"
         local size="${BASH_REMATCH[3]}"
         local type="${BASH_REMATCH[4]}"
-        type="$(echo ${type:0:1} | tr '[:lower:]' '[:upper:]')${type:1}"
+        cap "$type"; type=$CAP
         if [ -n "$minor" ]; then
             echo "Llama ${major}.${minor} ${size}B ${type}"
         else
@@ -589,7 +608,7 @@ format_model_name() {
         local size="${BASH_REMATCH[1]}"
         local variant="${BASH_REMATCH[2]}"
         if [ -n "$variant" ]; then
-            variant="$(echo ${variant:0:1} | tr '[:lower:]' '[:upper:]')${variant:1}"
+            cap "$variant"; variant=$CAP
             echo "GPT OSS ${size}B ${variant}"
         else
             echo "GPT OSS ${size}B"
@@ -822,7 +841,7 @@ format_model_name() {
         local base="${BASH_REMATCH[1]}"
         local suffix="${BASH_REMATCH[2]}"
         # Capitalize first letter
-        suffix="$(echo ${suffix:0:1} | tr '[:lower:]' '[:upper:]')${suffix:1}"
+        cap "$suffix"; suffix=$CAP
         # Try to format the base name nicely
         base=$(echo "$base" | sed 's/-/ /g' | awk '{for(i=1;i<=NF;i++) $i=toupper(substr($i,1,1)) tolower(substr($i,2))}1')
         echo "$base $suffix"
@@ -939,7 +958,7 @@ calculate_cost() {
             input_price=3.00; output_price=15.00
             cache_creation_price=3.75; cache_read_price=0.30 ;;
         # Claude family - Haiku 4.5 ($1/$5)
-        *"haiku-4"*|*"haiku-4.5"*)
+        *"haiku-4"*)
             input_price=1.00; output_price=5.00
             cache_creation_price=1.25; cache_read_price=0.10 ;;
         # Claude family - Haiku 3.5 ($0.80/$4)
@@ -1002,7 +1021,7 @@ calculate_cost() {
             input_price=0.14; output_price=0.14 ;;
 
         # Kimi / Moonshot AI family (Alibaba Cloud)
-        *"kimi"*"k2.5"*|*"kimi-k2.5"*)
+        *"kimi"*"k2.5"*)
             input_price=0.20; output_price=3.00
             cache_creation_price=0.20; cache_read_price=0.02 ;;
         *"kimi"*"k2"*|*"moonshot"*"k2"*)
@@ -1023,7 +1042,7 @@ calculate_cost() {
             cache_creation_price=0.14; cache_read_price=0.014 ;;
         *"glm-4.6"*|*"glm-4-plus"*)
             input_price=0.84; output_price=0.84 ;;
-        *"glm-4.5"*|*"glm-4.5-air"*)
+        *"glm-4.5"*)
             input_price=0.14; output_price=0.14 ;;
         *"glm"*)
             input_price=0.14; output_price=0.14 ;;
@@ -1067,7 +1086,8 @@ calculate_cost() {
 
 get_subscription_info() {
     local provider="$1"
-    local current_timestamp=$(date +%s)
+    local current_timestamp
+    current_timestamp=$NOW
 
     [ ! -f "$STATUSLINE_CONFIG_FILE" ] && return
 
@@ -1110,12 +1130,11 @@ get_subscription_info() {
     if [ -n "$expiry_timestamp" ]; then
         local seconds_remaining=$((expiry_timestamp - current_timestamp))
         local days_remaining=$((seconds_remaining / 86400))
-        local color_code
 
         if [ "$days_remaining" -lt 0 ]; then
             printf "${C_RED}${label} OVERDUE %dd${C_RESET}" "$((days_remaining * -1))"
         elif [ "$days_remaining" -eq 0 ]; then
-            printf "${C_RED}${label} TODAY${C_RESET}"
+            printf '%s' "${C_RED}${label} TODAY${C_RESET}"
         elif [ "$days_remaining" -le 7 ]; then
             printf "${C_RED}${label} %dd${C_RESET}" "$days_remaining"
         elif [ "$days_remaining" -le 30 ]; then
@@ -1155,7 +1174,8 @@ detect_dev_environment() {
     if [ -f "$dir/composer.json" ]; then
         [ -n "$pkg_managers" ] && pkg_managers+="+composer" || pkg_managers="composer"
         if command -v php >/dev/null 2>&1; then
-            local php_ver="PHP $(php --version 2>/dev/null | head -1 | awk '{print $2}')"
+            local php_ver
+            php_ver="PHP $(php --version 2>/dev/null | head -1 | awk '{print $2}')"
             [ -n "$languages" ] && languages+="+$php_ver" || languages="$php_ver"
         fi
     fi
@@ -1164,7 +1184,8 @@ detect_dev_environment() {
     if [ -f "$dir/Gemfile" ]; then
         [ -n "$pkg_managers" ] && pkg_managers+="+gem" || pkg_managers="gem"
         if command -v ruby >/dev/null 2>&1; then
-            local ruby_ver="Ruby $(ruby --version 2>/dev/null | awk '{print $2}')"
+            local ruby_ver
+            ruby_ver="Ruby $(ruby --version 2>/dev/null | awk '{print $2}')"
             [ -n "$languages" ] && languages+="+$ruby_ver" || languages="$ruby_ver"
         fi
     fi
@@ -1173,10 +1194,12 @@ detect_dev_environment() {
     if [ -f "$dir/requirements.txt" ] || [ -f "$dir/Pipfile" ] || [ -f "$dir/pyproject.toml" ]; then
         [ -n "$pkg_managers" ] && pkg_managers+="+pip" || pkg_managers="pip"
         if command -v python3 >/dev/null 2>&1; then
-            local py_ver="Python $(python3 --version 2>/dev/null | awk '{print $2}')"
+            local py_ver
+            py_ver="Python $(python3 --version 2>/dev/null | awk '{print $2}')"
             [ -n "$languages" ] && languages+="+$py_ver" || languages="$py_ver"
         elif command -v python >/dev/null 2>&1; then
-            local py_ver="Python $(python --version 2>/dev/null | awk '{print $2}')"
+            local py_ver
+            py_ver="Python $(python --version 2>/dev/null | awk '{print $2}')"
             [ -n "$languages" ] && languages+="+$py_ver" || languages="$py_ver"
         fi
     fi
@@ -1185,7 +1208,8 @@ detect_dev_environment() {
     if [ -f "$dir/go.mod" ]; then
         [ -n "$pkg_managers" ] && pkg_managers+="+go" || pkg_managers="go"
         if command -v go >/dev/null 2>&1; then
-            local go_ver="Go $(go version 2>/dev/null | awk '{print $3}' | sed 's/go//')"
+            local go_ver
+            go_ver="Go $(go version 2>/dev/null | awk '{print $3}' | sed 's/go//')"
             [ -n "$languages" ] && languages+="+$go_ver" || languages="$go_ver"
         fi
     fi
@@ -1194,7 +1218,8 @@ detect_dev_environment() {
     if [ -f "$dir/Cargo.toml" ]; then
         [ -n "$pkg_managers" ] && pkg_managers+="+cargo" || pkg_managers="cargo"
         if command -v rustc >/dev/null 2>&1; then
-            local rust_ver="Rust $(rustc --version 2>/dev/null | awk '{print $2}')"
+            local rust_ver
+            rust_ver="Rust $(rustc --version 2>/dev/null | awk '{print $2}')"
             [ -n "$languages" ] && languages+="+$rust_ver" || languages="$rust_ver"
         fi
     fi
@@ -1206,6 +1231,7 @@ detect_dev_environment() {
 # SERVER DETECTION
 # ============================================================================
 
+# shellcheck disable=SC2329  # invoked through bg_cached
 detect_running_servers() {
     local -a listened_ports ignored_ports active_servers
     local server_detection="true" listened="" ignored_list=""
@@ -1215,8 +1241,8 @@ detect_running_servers() {
             jq -r '.features // {} | (.server_detection | if . == null then "true" else tostring end),
                 ((.listened_ports // []) | map(tostring) | join(" ")), ((.ignored_ports // []) | map(tostring) | join(" "))' \
                 "$STATUSLINE_CONFIG_FILE" 2>/dev/null)
-        listened_ports=($listened)
-        ignored_ports=($ignored_list)
+        read -ra listened_ports <<< "$listened"
+        read -ra ignored_ports <<< "$ignored_list"
     fi
     [ "$server_detection" != "true" ] && return
 
@@ -1236,7 +1262,7 @@ detect_running_servers() {
                 [ "$skip_port" = true ] && continue
 
                 if echo "$netstat_output" | grep -q -E "[.:]${port}$"; then
-                    process_name=$(lsof -iTCP:$port -sTCP:LISTEN -n -P 2>/dev/null | awk 'NR==2 {print $1}')
+                    process_name=$(lsof -iTCP:"$port" -sTCP:LISTEN -n -P 2>/dev/null | awk 'NR==2 {print $1}')
                     [ -n "$process_name" ] && active_servers+=("${process_name}:${port}")
                 fi
             done
@@ -1368,7 +1394,7 @@ count_hooks() {
 readonly SPINNER_FRAMES=("◐" "◓" "◑" "◒")
 
 get_spinner_frame() {
-    local index=$(( $(date +%s) % 4 ))
+    local index=$(( NOW % 4 ))
     echo "${SPINNER_FRAMES[$index]}"
 }
 
@@ -1494,7 +1520,7 @@ fit_line() {
             if [ "$p" -gt 0 ] && [ "$p" -ge "$max" ]; then max=$p; drop=$i; fi
         done
         { [ "$drop" -lt 0 ] || [ "$(vis_len "$line")" -le "$width" ]; } && break
-        segs[$drop]=""
+        segs[drop]=""
     done
     printf '%s' "$line"
 }
@@ -1502,7 +1528,8 @@ fit_line() {
 # ▁▂▃▄▅▆▇█ for space-separated integers (3+), scaled to $2 (or to their max when omitted)
 sparkline() {
     local max=${2:-0} v out=""
-    local -a vals=($1) ch=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    local -a vals ch=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    read -ra vals <<< "$1"
     [ ${#vals[@]} -ge 3 ] || return
     if [ "$max" -eq 0 ]; then
         for v in "${vals[@]}"; do [ "$v" -gt "$max" ] && max=$v; done
@@ -1528,7 +1555,7 @@ fmt_cents() {
 cost_ledger() {
     local sid=$1 cents=$2 dir="${HOME}/.cache/claude-statusline" now today cutoff file
     [ -n "$sid" ] && mkdir -p "$dir" 2>/dev/null || return
-    now=$(date +%s); today=$(_epoch_to_fmt "$now" +%F)
+    now=$NOW; today=$(_epoch_to_fmt "$now" +%F)
     cutoff=$(_epoch_to_fmt $((now - 6 * 86400)) +%F)
     file="$dir/cost-${today}.tsv"
     touch "$file"
@@ -1545,7 +1572,7 @@ cost_ledger() {
 # Prints the cached output of "$@" (cache name $1) and refreshes it in the background when
 # older than a minute, so slow commands (network, daemons) never block a render.
 bg_cached() {
-    local cache="/tmp/claude-statusline-$1"; shift
+    local cache="${STATE_DIR}/$1"; shift
     if [ ! -f "$cache" ] || [ -n "$(find "$cache" -mmin +1 2>/dev/null)" ]; then
         touch "$cache"
         ("$@" > "$cache.$$" 2>/dev/null; mv "$cache.$$" "$cache") </dev/null >/dev/null 2>&1 &
@@ -1553,6 +1580,7 @@ bg_cached() {
     cat "$cache" 2>/dev/null
 }
 
+# shellcheck disable=SC2329,SC2016  # invoked through bg_cached; $c/$checks are jq variables
 _fetch_pr() {
     cd "$1" && gh pr view "$2" --json state,number,reviewDecision,statusCheckRollup --jq 'select(.state == "OPEN") |
         ([.statusCheckRollup[]? | (.conclusion // .state // "")] ) as $c |
@@ -1578,9 +1606,9 @@ get_docker_count() {
     [ "$n" -gt 0 ] && printf '%s' "$n"
 }
 
-# macOS notification, once per key (flag file in /tmp), sent in the background
+# macOS notification, once per key (flag file in STATE_DIR), sent in the background
 notify_once() {
-    local flag="/tmp/claude-statusline-notified-$1"
+    local flag="${STATE_DIR}/notified-$1"
     [ "$NOTIFICATIONS" = "true" ] && [ ! -f "$flag" ] && command -v osascript >/dev/null 2>&1 || return
     : > "$flag"
     osascript -e "display notification \"${3//\"/}\" with title \"${2//\"/}\" sound name \"Submarine\"" \
@@ -1756,12 +1784,12 @@ get_git_metrics() {
 
 init_session() {
     local session_id="$1"
-    local session_file="/tmp/claude-session-${session_id}"
-    local session_metrics="/tmp/claude-metrics-${session_id}"
-    local message_count_file="/tmp/claude-messages-${session_id}"
+    local session_file="${STATE_DIR}/session-${session_id}"
+    local session_metrics="${STATE_DIR}/metrics-${session_id}"
+    local message_count_file="${STATE_DIR}/messages-${session_id}"
 
     if [ ! -f "$session_file" ]; then
-        date +%s > "$session_file"
+        echo "$NOW" > "$session_file"
         echo "0" > "$session_metrics"
         echo "0" > "$message_count_file"
     fi
@@ -1798,7 +1826,7 @@ format_duration() {
 # Echoes nothing when the window is absent (non-subscribers / pre-first-response).
 # Projects the run-out time from the burn rate since the window started; ⚠ when it beats the reset.
 format_rate_window() {
-    local label="$1" pct="$2" resets="$3" now="$4" window_secs="$5" eta_fmt="$6"
+    local label="$1" pct="$2" resets="$3" now="$4" window_secs="$5" eta_fmt="$6" alt_name="$7" alt_pct="$8"
     [[ ! "$pct" =~ ^[0-9]+$ ]] && return
 
     local color seg eta=""
@@ -1816,6 +1844,9 @@ format_rate_window() {
         # Keyed by window reset time: one notification per window
         local why="${pct}% used"
         [ -n "$eta" ] && why+=", projected to run out ~${eta}"
+        # Same rule as the statusline suggestion: any healthy account for 7d, 20+ points freer for 5h
+        [ -n "$alt_name" ] && { [ "$label" = "7d" ] || [ $((alt_pct + 20)) -le "$pct" ]; } && \
+            why+=". Switch to @${alt_name} (${alt_pct}% of 5h)"
         notify_once "quota-${label}-${resets}" "Claude ${label} limit" "${why}. Resets in $(format_duration "$now" "$resets")."
         seg="${C_ALERT}⚠ ${label}${C_RESET} "
     else
@@ -1829,19 +1860,19 @@ format_rate_window() {
 }
 
 # Claude plan from the OAuth account in ~/.claude.json, e.g. "Team 5x", "Max 20x", "Pro".
-# Cached in /tmp and refreshed only when ~/.claude.json changes.
+# Cached in STATE_DIR and refreshed only when the account file changes.
 # "account<TAB>plan" for the active account (CLAUDE_CONFIG_DIR, else ~/.claude.json), e.g.
 # "naira<TAB>Team 5x"; account is the email's local part. Cached until the account file changes.
 get_account_info() {
     local account_file="${CLAUDE_CONFIG_DIR:+${CLAUDE_CONFIG_DIR}/}.claude.json" cache_file
     [ -n "$CLAUDE_CONFIG_DIR" ] || account_file="${HOME}/.claude.json"
     [ -f "$account_file" ] || return
-    cache_file="/tmp/claude-statusline-account-$(printf '%s' "$account_file" | cksum | cut -d' ' -f1)"
+    cache_file="${STATE_DIR}/account-$(printf '%s' "$account_file" | cksum | cut -d' ' -f1)"
     if [ ! -f "$cache_file" ] || [ "$account_file" -nt "$cache_file" ]; then
         jq -r '
             .oauthAccount // {} |
             ({claude_max: "Max", claude_pro: "Pro", claude_team: "Team", claude_enterprise: "Enterprise"}[.organizationType // ""] // "") as $plan |
-            ((.userRateLimitTier // "") | capture("max_(?<x>[0-9]+x)")?.x // "") as $mult |
+            ((.userRateLimitTier // "") | (capture("max_(?<x>[0-9]+x)")? | .x) // "") as $mult |
             [(.emailAddress // "" | split("@")[0]), ([$plan, $mult] | map(select(. != "")) | join(" "))] | @tsv
         ' "$account_file" > "$cache_file" 2>/dev/null
     fi
@@ -1938,7 +1969,7 @@ main() {
 
     # Parse all input fields in one jq call; order must match the read list below
     local current_dir model_raw model_id model total_input total_output context_size session_id
-    local json_cost json_duration lines_added lines_removed
+    local json_cost lines_added lines_removed
     local current_input current_cache_creation current_cache_read
     local mcp_servers_count tools_count cache_creation_tokens cache_read_tokens
     local json_tool_calls json_files_edited json_bash_commands transcript_path effort_level
@@ -1948,7 +1979,7 @@ main() {
         IFS= read -r current_dir; IFS= read -r model_raw; IFS= read -r model_id
         IFS= read -r total_input; IFS= read -r total_output; IFS= read -r context_size
         IFS= read -r session_id
-        IFS= read -r json_cost; IFS= read -r json_duration
+        IFS= read -r json_cost
         IFS= read -r lines_added; IFS= read -r lines_removed
         IFS= read -r current_input; IFS= read -r current_cache_creation; IFS= read -r current_cache_read
         IFS= read -r mcp_servers_count; IFS= read -r tools_count
@@ -1965,7 +1996,7 @@ main() {
         v(.workspace.current_dir; ""), v(.model.display_name; ""), v(.model.id; ""),
         v(.context_window.total_input_tokens; "0"), v(.context_window.total_output_tokens; "0"),
         v(.context_window.context_window_size; "0"), v(.session_id; ""),
-        v(.cost.total_cost_usd; ""), v(.cost.total_duration_ms; ""),
+        v(.cost.total_cost_usd; ""),
         v(.cost.total_lines_added; "0"), v(.cost.total_lines_removed; "0"),
         v(.context_window.current_usage.input_tokens; "0"),
         v(.context_window.current_usage.cache_creation_input_tokens; "0"),
@@ -1999,13 +2030,13 @@ main() {
 
     # Session management
     init_session "$session_id"
-    local session_file="/tmp/claude-session-${session_id}"
-    local session_metrics="/tmp/claude-metrics-${session_id}"
-    local message_count_file="/tmp/claude-messages-${session_id}"
+    local session_file="${STATE_DIR}/session-${session_id}"
+    local session_metrics="${STATE_DIR}/metrics-${session_id}"
+    local message_count_file="${STATE_DIR}/messages-${session_id}"
 
     local session_start current_time duration
     session_start=$(cat "$session_file")
-    current_time=$(date +%s)
+    current_time=$NOW
     duration=$(format_duration "$session_start" "$current_time")
 
 
@@ -2028,9 +2059,9 @@ main() {
     echo "$current_total" > "$session_metrics"
 
     # Session statistics
-    local stats_tool_calls_file="/tmp/claude-stats-tools-${session_id}"
-    local stats_files_file="/tmp/claude-stats-files-${session_id}"
-    local stats_bash_file="/tmp/claude-stats-bash-${session_id}"
+    local stats_tool_calls_file="${STATE_DIR}/stats-tools-${session_id}"
+    local stats_files_file="${STATE_DIR}/stats-files-${session_id}"
+    local stats_bash_file="${STATE_DIR}/stats-bash-${session_id}"
 
     [ ! -f "$stats_tool_calls_file" ] && echo "0" > "$stats_tool_calls_file"
     [ ! -f "$stats_files_file" ] && echo "0" > "$stats_files_file"
@@ -2043,15 +2074,18 @@ main() {
     bash_commands_count=${json_bash_commands:-$(cat "$stats_bash_file" 2>/dev/null || echo "0")}
 
     # Detect environment (returns "pkg_manager|language" format)
-    local dev_env_result package_manager prog_lang
-    dev_env_result=$(detect_dev_environment "$current_dir")
-    package_manager=$(echo "$dev_env_result" | cut -d'|' -f1)
-    prog_lang=$(echo "$dev_env_result" | cut -d'|' -f2)
+    local dev_env_result="" package_manager="" prog_lang=""
+    if [ "$SHOW_DEV" = "true" ] && { [ "$SHOW_LANGUAGE" = "true" ] || [ "$SHOW_PACKAGE_MANAGER" = "true" ]; }; then
+        dev_env_result=$(detect_dev_environment "$current_dir")
+        [ "$SHOW_PACKAGE_MANAGER" = "true" ] && package_manager=${dev_env_result%%|*}
+        [ "$SHOW_LANGUAGE" = "true" ] && prog_lang=${dev_env_result#*|}
+    fi
 
     # Detect servers
-    local running_servers
+    local running_servers=""
     # netstat + lsof per port is slow; a minute-old answer is fine for "is my dev server up"
-    running_servers=$(bg_cached "servers-$(id -u)" detect_running_servers)
+    [ "$SHOW_DEV" = "true" ] && [ "$SHOW_SERVERS" = "true" ] && \
+        running_servers=$(bg_cached "servers-$(id -u)" detect_running_servers)
 
     # Count configs (MCP, Rules, Hooks)
     local claude_md_count=0 rules_count=0 hooks_count_new=0
@@ -2062,7 +2096,7 @@ main() {
 
     # Parse transcript for tools, agents, todos
     local transcript_result_file
-    transcript_result_file="/tmp/claude-transcript-result-${session_id}"
+    transcript_result_file="${STATE_DIR}/transcript-result-${session_id}"
 
     # One jq call: fixed fields first, then one "name<TAB>count" line per top completed tool
     local running_tools_count=0 tool_name tool_input tool_timestamp
@@ -2103,9 +2137,6 @@ main() {
     [ -z "$session_cost" ] && session_cost=$(calculate_cost "$provider_name" "$model_id" "$total_input" "$total_output" "$cache_creation_tokens" "$cache_read_tokens")
 
     # Cache efficiency
-    local cache_total cache_efficiency=0
-    cache_total=$((cache_creation_tokens + cache_read_tokens))
-    [ "$cache_total" -gt 0 ] && [ "$total_input" -gt 0 ] && cache_efficiency=$((cache_read_tokens * 100 / total_input))
 
     # Calculate context window usage percentage
     local context_usage_pct=0 context_usage_color="${C_GREEN}" current_total_tokens=0
@@ -2129,7 +2160,7 @@ main() {
     fi
 
     # Messages left before the window fills, from a moving average of per-message context growth
-    local growth_file="/tmp/claude-ctxgrowth-${session_id}" last_ctx=0 avg_growth=0 msgs_left=""
+    local growth_file="${STATE_DIR}/ctxgrowth-${session_id}" last_ctx=0 avg_growth=0 msgs_left=""
     [ -f "$growth_file" ] && read -r last_ctx avg_growth < "$growth_file"
     [[ "$last_ctx" =~ ^[0-9]+$ ]] || last_ctx=0
     [[ "$avg_growth" =~ ^[0-9]+$ ]] || avg_growth=0
@@ -2145,9 +2176,9 @@ main() {
     # Git info
     local git_info git_metrics last_commit_time commits_today branch="" stash_count=0 git_out
     # Separate capture: bash 3.2 applies a `IFS=... read <<< "$(cmd)"` IFS inside cmd too
-    git_out=$(get_git_info "$current_dir")
+    [ "$SHOW_GIT" = "true" ] && git_out=$(get_git_info "$current_dir")
     IFS=$'\t' read -r branch stash_count git_info <<< "$git_out"
-    git_metrics=$(get_git_metrics "$current_dir" "$current_time")
+    [ -n "$git_out" ] && git_metrics=$(get_git_metrics "$current_dir" "$current_time")
     last_commit_time=$(echo "$git_metrics" | cut -d'|' -f1)
     commits_today=$(echo "$git_metrics" | cut -d'|' -f2)
 
@@ -2170,6 +2201,7 @@ main() {
 
     # Determine cost display (integer cents avoids bc for the thresholds)
     local final_cost_display final_cost_color cost_cents
+    # shellcheck disable=SC2016  # literal dollar sign
     final_cost_display=$(printf '$%.2f' "${session_cost:-0}" 2>/dev/null) || final_cost_display='$0.00'
     cost_cents=${final_cost_display//[^0-9]/}
     cost_cents=$((10#${cost_cents:-0}))
@@ -2189,7 +2221,7 @@ main() {
     fi
 
     # Per-message history ("ctx% cost_cents") for sparklines: context trend and cost per message
-    local hist_file="/tmp/claude-hist-${session_id}" ctx_spark="" cost_spark=""
+    local hist_file="${STATE_DIR}/hist-${session_id}" ctx_spark="" cost_spark=""
     [ -n "$new_message" ] && [ -n "$session_id" ] && echo "$context_usage_pct $cost_cents" >> "$hist_file"
     if [ -f "$hist_file" ]; then
         local ctx_hist cost_hist
@@ -2213,7 +2245,8 @@ main() {
     local SEP=" ${C_GRAY}┊${C_RESET} "
 
     # --- Line 1: Model · Provider · Cost · Duration · Msg  ┊  Tokens · Ctx ---
-    local l1="${C_PURPLE}${model}${C_RESET}"
+    local l1=""
+    [ "$SHOW_MODEL" = "true" ] && l1="${C_PURPLE}${model}${C_RESET}"
     if [ -n "$effort_level" ]; then
         local effort_color="${C_CYAN}"
         case "$effort_level" in
@@ -2223,7 +2256,7 @@ main() {
         esac
         # Title Case; bash 3.2 has no ${var^}
         local effort_label
-        effort_label="$(printf '%s' "${effort_level:0:1}" | tr '[:lower:]' '[:upper:]')${effort_level:1}"
+        cap "$effort_level"; effort_label=$CAP
         [ "$effort_level" = "xhigh" ] && effort_label="Extra"
         l1+=" ${effort_color}◆ ${effort_label}${C_RESET}"
     fi
@@ -2237,15 +2270,19 @@ main() {
 
     # Segments: "prio<TAB>separator<TAB>text"; fit_line drops high prio first on narrow terminals
     local T=$'\t' D=" · "
-    local -a s1=("0${T}${T}${l1}" "8${T}${D}${T}${provider_section}"
-        "2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
-    [ -n "$cost_spark" ] && s1+=("7${T} ${T}${final_cost_color}${cost_spark}${C_RESET}")
-    [ -n "$burn_rate" ] && s1+=("6${T} ${T}${C_GRAY}${burn_rate}${C_RESET}")
-    [[ "$spend_today" =~ ^[0-9]+$ ]] && [ "$spend_today" -gt "$cost_cents" ] &&
-        s1+=("5${T}${D}${T}${C_GRAY}today${C_RESET} ${C_YELLOW}$(fmt_cents "$spend_today")${C_RESET}")
-    [[ "$spend_week" =~ ^[0-9]+$ ]] && [ "$spend_week" -gt "$spend_today" ] &&
-        s1+=("8${T} ${T}${C_GRAY}wk $(fmt_cents "$spend_week")${C_RESET}")
-    s1+=("9${T}${D}${T}${C_GRAY}${duration}${C_RESET}" "7${T}${D}${T}${C_CYAN}${message_count} msg${C_RESET}")
+    local -a s1=("0${T}${T}${l1# }")
+    [ "$SHOW_PROVIDER" = "true" ] && s1+=("8${T}${D}${T}${provider_section}")
+    if [ "$SHOW_COST" = "true" ]; then
+        s1+=("2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
+        [ -n "$cost_spark" ] && s1+=("7${T} ${T}${final_cost_color}${cost_spark}${C_RESET}")
+        [ -n "$burn_rate" ] && s1+=("6${T} ${T}${C_GRAY}${burn_rate}${C_RESET}")
+        [[ "$spend_today" =~ ^[0-9]+$ ]] && [ "$spend_today" -gt "$cost_cents" ] &&
+            s1+=("5${T}${D}${T}${C_GRAY}today${C_RESET} ${C_YELLOW}$(fmt_cents "$spend_today")${C_RESET}")
+        [[ "$spend_week" =~ ^[0-9]+$ ]] && [ "$spend_week" -gt "$spend_today" ] &&
+            s1+=("8${T} ${T}${C_GRAY}wk $(fmt_cents "$spend_week")${C_RESET}")
+    fi
+    s1+=("9${T}${D}${T}${C_GRAY}${duration}${C_RESET}")
+    [ "$SHOW_MESSAGE_COUNT" = "true" ] && s1+=("7${T}${D}${T}${C_CYAN}${message_count} msg${C_RESET}")
 
     if [ "$context_usage_pct" -gt 0 ]; then
         local ctx_label=""
@@ -2262,13 +2299,15 @@ main() {
         fi
     fi
 
-    local cache_section
-    cache_section=$(format_prompt_cache "$cache_hit_pct" "$cache_expires_at" "$cache_warm" "$current_time")
+    local cache_section=""
+    [ "$SHOW_CACHE_EFFICIENCY" = "true" ] && \
+        cache_section=$(format_prompt_cache "$cache_hit_pct" "$cache_expires_at" "$cache_warm" "$current_time")
     [ -n "$cache_section" ] && s1+=("4${T}${SEP}${T}${cache_section}")
     if [ "$SHOW_RATE_LIMIT" = "true" ]; then
-        local five seven
-        five=$(format_rate_window "5h" "$five_pct" "$five_resets" "$current_time" 18000 "+%H:%M")
-        seven=$(format_rate_window "7d" "$seven_pct" "$seven_resets" "$current_time" 604800 "+%a %H:%M")
+        local five seven alt_name="" alt_pct=""
+        [ -n "$account_name" ] && read -r alt_name alt_pct <<< "$(suggest_account "$account_name" "$current_time")"
+        five=$(format_rate_window "5h" "$five_pct" "$five_resets" "$current_time" 18000 "+%H:%M" "$alt_name" "$alt_pct")
+        seven=$(format_rate_window "7d" "$seven_pct" "$seven_resets" "$current_time" 604800 "+%a %H:%M" "$alt_name" "$alt_pct")
         [ -n "$five" ] && s1+=("2${T}${SEP}${T}${C_GRAY}◴${C_RESET} ${five}")
         if [ -n "$seven" ]; then
             if [ -n "$five" ]; then s1+=("3${T}${D}${T}${seven}")
@@ -2277,10 +2316,8 @@ main() {
 
         # Near a limit: point to the other account with the most 5h headroom
         # (for a 5h squeeze it must be at least 20 points lower to be worth switching)
-        if [ -n "$account_name" ] && { [ "${five_pct:-0}" -ge 80 ] || [ "${seven_pct:-0}" -ge 90 ] || [[ "$five" == *"→ full"* ]]; }; then
-            local alt_name alt_pct
-            read -r alt_name alt_pct <<< "$(suggest_account "$account_name" "$current_time")"
-            [ -n "$alt_name" ] && { [ "${seven_pct:-0}" -ge 90 ] || [ $((alt_pct + 20)) -le "${five_pct:-0}" ]; } && \
+        if [ -n "$alt_name" ] && { [ "${five_pct:-0}" -ge 80 ] || [ "${seven_pct:-0}" -ge 90 ] || [[ "$five" == *"→ full"* ]]; }; then
+            { [ "${seven_pct:-0}" -ge 90 ] || [ $((alt_pct + 20)) -le "${five_pct:-0}" ]; } && \
                 s1+=("1${T} ${T}${C_GRAY}⇄${C_RESET} $(account_color "$alt_name")@${alt_name}${C_RESET} ${C_GRAY}${alt_pct}%${C_RESET}")
         fi
     fi
@@ -2330,8 +2367,8 @@ main() {
         fi
         [ "$SHOW_STASH" = "true" ] && [ "${stash_count:-0}" -gt 0 ] && \
             s2+=("6${T}${D}${T}${C_YELLOW}⚑ ${stash_count} stash${C_RESET}")
-        [ -n "$last_commit_time" ] && s2+=("7${T}${D}${T}${C_GRAY}${last_commit_time}${C_RESET}")
-        [ -n "$commits_today" ] && s2+=("8${T}${D}${T}${C_GREEN}${commits_today} today${C_RESET}")
+        [ "$SHOW_LAST_COMMIT" = "true" ] && [ -n "$last_commit_time" ] && s2+=("7${T}${D}${T}${C_GRAY}${last_commit_time}${C_RESET}")
+        [ "$SHOW_COMMITS_TODAY" = "true" ] && [ -n "$commits_today" ] && s2+=("8${T}${D}${T}${C_GREEN}${commits_today} today${C_RESET}")
     else
         s2+=("0${T}${SEP}${T}◈ ${dir}")
     fi
@@ -2388,7 +2425,7 @@ main() {
     fi
 
     # Append sections with ┊ separators
-    [ -n "$stats_sec" ] && s2+=("9${T}${SEP}${T}${stats_sec}")
+    [ "$SHOW_TOOLS" = "true" ] && [ -n "$stats_sec" ] && s2+=("9${T}${SEP}${T}${stats_sec}")
     [ -n "$dev_cfg" ] && s2+=("4${T}${SEP}${T}${dev_cfg}")
 
     out_lines+=("$(fit_line "$line_width" "${s2[@]}")")

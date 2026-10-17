@@ -12,9 +12,12 @@ if command -v trash >/dev/null 2>&1; then
     find "$HOME/.honcho" -maxdepth 1 -type f \
         \( -name 'state-*.json' -o -name 'session-*.json' -o -name 'status-*.json' \) \
         -mtime +"$STALE_DAYS" -exec trash {} + 2>/dev/null
-    find /tmp/ -maxdepth 1 -type f \
+    # Statusline state; /tmp holds files from versions before STATE_DIR
+    find "$HOME/.cache/claude-statusline/state" -maxdepth 1 -type f -mtime +"$STALE_DAYS" -exec trash {} + 2>/dev/null
+    find /tmp/ -maxdepth 1 -type f -user "$(id -u)" \
         \( -name 'claude-session-*' -o -name 'claude-metrics-*' -o -name 'claude-messages-*' \
-           -o -name 'claude-stats-*' -o -name 'claude-transcript-result-*' \) \
+           -o -name 'claude-stats-*' -o -name 'claude-transcript-result-*' -o -name 'claude-hist-*' \
+           -o -name 'claude-ctxgrowth-*' -o -name 'claude-statusline-*' \) \
         -mtime +"$STALE_DAYS" -exec trash {} + 2>/dev/null
 fi
 

@@ -1,0 +1,5 @@
+  [31m╭[0m [35mOpus 5.5 1M[0m [31m◆ Extra[0m [33m↯ fast[0m [90m✻[0m · [36mClaude[0m · [31m$2.84[0m [90m$8.11/h[0m · [90m<1m[0m · [36m1 msg[0m [90m┊[0m [1m[31m⚠ ctx[0m [33m█[33m█[33m█[33m█[33m█[33m█[33m█[33m█[33m▊[90m·[0m [33m88%[0m [90m(880k/1M)[0m [90m┊[0m [1m[33m⚠ cache[0m [32m96%[0m [33m(3m)[0m [90m┊[0m [90m◴[0m [1m[31m⚠ 5h[0m [32m█[32m█[32m█[32m▏[90m·[0m [32m64%[0m [90m(2h 20m)[0m [1m[31m→ full ~01:30[0m · 7d [32m█[32m▏[90m·[90m·[90m·[0m [32m23%[0m [90m(3d 21h)[0m
+  [31m│[0m [35m◇ Refactor auth flow[0m [90m┊[0m ◈ work · [32m+212[0m/[31m-87[0m
+  [31m│[0m [33m◐[0m Read: [36mauth.ts[0m [90m(2m 18s)[0m · [32m✓ Bash ×3[0m
+  [31m│[0m [33m◐[0m [35mExplore[0m [[36mhaiku[0m]: Find token refresh callers [90m(2m 18s)[0m
+  [31m╰[0m ▸ [33mWiring up session refresh[0m [90m(1/3)[0m

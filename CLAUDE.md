@@ -32,9 +32,9 @@ This is a custom statusline for Claude Code that displays AI model information, 
 - `format_rate_window`, `format_prompt_cache` - render `.rate_limits` (values come from the main jq call; run-out projection) and `.prompt_cache`
 - `get_account_info` - account + plan from `$CLAUDE_CONFIG_DIR/.claude.json` (else `~/.claude.json`); `record_account_quota` / `suggest_account` share limits across accounts via `~/.cache/claude-statusline/quota-<account>.tsv`
 - `grad_color` / `make_bar` - truecolor gradient + 1/8-cell bar (16-color fallback); `fit_line` - drops segments by priority to fit `$COLUMNS`. Lines 1-2 are built as `prio<TAB>sep<TAB>text` segments
-- `sparkline` (history in `/tmp/claude-hist-{session_id}`), `cost_ledger` (per-day spend in `~/.cache/claude-statusline/cost-YYYY-MM-DD.tsv`), `get_pr_status` (background `gh`, cache `/tmp/claude-statusline-pr-<cksum>`)
+- `sparkline` (history in `$STATE_DIR/hist-{session_id}`), `cost_ledger` (per-day spend in `~/.cache/claude-statusline/cost-YYYY-MM-DD.tsv`), `get_pr_status` (background `gh`, cache `$STATE_DIR/pr-<cksum>`)
 - Theme palette is resolved before the `readonly` color constants (one extra `jq` on the config)
-- `bg_cached` - background-refreshed command cache (PR via `_fetch_pr`, docker); `notify_once` - osascript notification keyed by a flag in `/tmp/claude-statusline-notified-*`
+- `bg_cached` - background-refreshed command cache (PR via `_fetch_pr`, docker); `notify_once` - osascript notification keyed by a flag in `$STATE_DIR/notified-*`
 - Mode (`zen`/`compact`/`full`): `STATUSLINE_MODE` or `~/.cache/claude-statusline/mode`, set with `--mode`
 - `calculate_cost` - only used when the input has no `.cost.total_cost_usd`
 
@@ -46,13 +46,23 @@ Transcript timestamps are UTC; parse them with `TZ=UTC` (see `format_elapsed_tim
 
 ## Testing
 
+Snapshot tests (frozen clock via `STATUSLINE_NOW`, fresh fake HOME per case, system `jq` first in PATH so jq 1.7 compatibility is checked):
+```bash
+tests/run.sh            # compare with tests/cases/*/expected.txt
+tests/run.sh --update   # accept the current output after an intended change
+shellcheck -s bash statusline-command.sh session-start-hook.sh   # must stay clean
+```
+Add a case as `tests/cases/<name>/` with `input.json` and optionally `env`, `setup.sh`, `transcript.jsonl` (see the header of `tests/run.sh`).
+
+Manual testing:
+
 Test the statusline manually (capture a real input first by temporarily adding
 `printf '%s' "$input" > /tmp/statusline-debug.json` after `input=$(cat)` in `main`):
 ```bash
 bash ~/Scripts/claude-statusline/statusline-command.sh < /tmp/statusline-debug.json
 ```
 
-Replaying a captured input with your real HOME pollutes the live session's state (cost ledger in `~/.cache/claude-statusline/`, `/tmp/claude-hist-*`): the stale lower cost looks like a resume. Use a fake HOME and another session id:
+Replaying a captured input with your real HOME pollutes the live session's state (cost ledger in `~/.cache/claude-statusline/`, `$STATE_DIR/hist-*`): the stale lower cost looks like a resume. Use a fake HOME and another session id:
 ```bash
 jq '.session_id="test"' /tmp/statusline-debug.json | HOME=$(mktemp -d) bash statusline-command.sh
 ```
@@ -114,9 +124,10 @@ The statusline is configured in `~/.claude/settings.json`:
 
 ## Session Files
 
-The script creates temporary files for session tracking:
-- `/tmp/claude-session-{session_id}` - Session start timestamp
-- `/tmp/claude-metrics-{session_id}` - Token tracking
-- `/tmp/claude-messages-{session_id}` - Message count
-- `/tmp/claude-ctxgrowth-{session_id}` - Last context size + avg growth per message (for "msg left")
-- `/tmp/claude-cache-{session_id}-*` - Cached expensive operations
+All state lives in `STATE_DIR` = `~/.cache/claude-statusline/state/` (0700; not shared `/tmp`, where predictable names could be pre-created as symlinks by another user). `session-start-hook.sh` prunes files older than 7 days (and legacy `/tmp/claude-*` files):
+- `session-*`, `metrics-*`, `messages-*`, `stats-*` - per-session start time, token total, message count, stats
+- `ctxgrowth-*`, `hist-*` - context growth average and per-message history (sparklines)
+- `transcript-result-*` - parsed transcript summary
+- `account-*`, `pr-*`, `servers-*`, `docker`, `notified-*` - caches and notification flags
+
+Shared across sessions in `~/.cache/claude-statusline/`: `cost-YYYY-MM-DD.tsv` (spend ledger), `quota-<account>.tsv` (last-seen limits), `mode`.

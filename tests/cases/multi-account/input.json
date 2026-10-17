@@ -1,0 +1,22 @@
+{
+  "session_id": "t-multi",
+  "workspace": {
+    "current_dir": "__WORK__"
+  },
+  "model": {
+    "display_name": "Opus 5.5"
+  },
+  "cost": {
+    "total_cost_usd": 0.42
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 92,
+      "resets_at": 1767228600
+    },
+    "seven_day": {
+      "used_percentage": 40,
+      "resets_at": 1767525600
+    }
+  }
+}
