@@ -15,7 +15,7 @@
 # ============================================================================
 
 readonly CONFIG_FILE="${HOME}/.claude/statusline-config.json"
-readonly STATUSLINE_CONFIG_FILE="${HOME}/Scripts/claude-statusline/statusline-config.json"
+readonly STATUSLINE_CONFIG_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/statusline-config.json"
 
 # ============================================================================
 # COLOR DEFINITIONS

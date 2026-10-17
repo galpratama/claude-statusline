@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-17 — Config path resolved from script dir
+
+`STATUSLINE_CONFIG_FILE` was hardcoded to `~/Scripts/claude-statusline/`, which
+does not exist on Linux (repo lives in `~/scripts/`), so port/subscription config
+was silently skipped. It now resolves relative to the script's own directory.
+
 ## 2026-10-17 — Remove OSC 8 links
 - Claude Code strips OSC 8 in the statusline: dropped `osc_link`, `get_repo_url`, PR url field
 
