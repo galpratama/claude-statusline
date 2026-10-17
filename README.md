@@ -453,6 +453,12 @@ This controls what the statusline displays and how it behaves. See [Customizatio
 ### Alerts
 Context ≥85%, cache expiring within 5 minutes, a usage limit ≥90% or projected to run out are shown bold with `⚠`, and the gutter turns red.
 
+### Notifications
+A macOS notification (once per usage window / session) when a usage limit hits 90% or is projected to run out before it resets, and when context reaches 90%. Disable with `"features": {"notifications": false}`.
+
+### Modes
+`full` (default), `compact` (first two lines) or `zen` (one line: model, cost, context, limits + alerts). Switch for every session with `~/Scripts/claude-statusline/statusline-command.sh --mode zen`, or per process with `STATUSLINE_MODE=zen`.
+
 ### Adaptive Layout
 Lines are fitted to the terminal width (`$COLUMNS`, passed by Claude Code). On narrow terminals the least important segments drop first (duration, provider, token counts…); alerts drop last, model and directory never.
 
@@ -475,6 +481,7 @@ Set `display.theme` in `~/.claude/statusline-config.json` to `catppuccin`, `toky
 - Added/removed files, last commit age, commits today
 - Open PR for the branch with CI checks and review state (`PR #18 ✓ approved`), via `gh`, refreshed in the background at most once a minute
 - Clickable links (OSC 8, in terminals that support them): folder → Finder, branch → repo tree, PR → pull request
+- Stash count (`⚑ 2 stash`, toggle `segments.git.show_stash`) and running Docker containers (`🐳 3`, toggle `segments.dev.show_docker`, refreshed in the background)
 
 ### Development Environment
 - Session name

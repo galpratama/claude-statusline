@@ -149,7 +149,8 @@ load_config() {
         v(.features.lint_checking; "false"), v(.features.server_detection; "true"),
         v(.segments.ai.show_rules; "true"), v(.segments.ai.show_hooks; "true"),
         v(.segments.ai.show_claude_md; "true"), v(.segments.tools.enabled; "true"),
-        v(.segments.agents.enabled; "true"), v(.segments.todos.enabled; "true")
+        v(.segments.agents.enabled; "true"), v(.segments.todos.enabled; "true"),
+        v(.features.notifications; "true"), v(.segments.dev.show_docker; "true"), v(.segments.git.show_stash; "true")
     ' "$CONFIG_FILE" 2>/dev/null); then
         {
             read -r SHOW_PROVIDER; read -r SHOW_MODEL
@@ -164,6 +165,7 @@ load_config() {
             read -r SHOW_RULES; read -r SHOW_HOOKS
             read -r SHOW_CLAUDE_MD; read -r SHOW_RUNNING_TOOLS
             read -r SHOW_AGENTS; read -r SHOW_TODOS
+            read -r NOTIFICATIONS; read -r SHOW_DOCKER; read -r SHOW_STASH
         } <<< "$config_values"
     else
         # Defaults when no config file
@@ -192,6 +194,9 @@ load_config() {
         SHOW_RUNNING_TOOLS="true"
         SHOW_AGENTS="true"
         SHOW_TODOS="true"
+        NOTIFICATIONS="true"
+        SHOW_DOCKER="true"
+        SHOW_STASH="true"
     fi
 
     # Convert string booleans
@@ -1551,10 +1556,11 @@ fit_line() {
     printf '%s' "$line"
 }
 
-# ▁▂▃▄▅▆▇█ for space-separated integers, scaled to $2 (or to their max when omitted)
+# ▁▂▃▄▅▆▇█ for space-separated integers (3+), scaled to $2 (or to their max when omitted)
 sparkline() {
     local max=${2:-0} v out=""
     local -a vals=($1) ch=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    [ ${#vals[@]} -ge 3 ] || return
     if [ "$max" -eq 0 ]; then
         for v in "${vals[@]}"; do [ "$v" -gt "$max" ] && max=$v; done
     fi
@@ -1598,25 +1604,49 @@ cost_ledger() {
         END { printf "%d %d", t, w }' "$dir"/cost-*.tsv
 }
 
-# Open PR (not merged/closed) for the current branch via gh: "number<TAB>checks<TAB>review<TAB>url".
-# Refreshed in the background at most once a minute so the render never waits on the network.
-get_pr_status() {
-    local dir=$1 branch=$2 cache key
-    command -v gh >/dev/null 2>&1 && [ -n "$branch" ] && [ "$branch" != "detached" ] || return
-    key=$(printf '%s' "${dir}|${branch}" | cksum | cut -d' ' -f1)
-    cache="/tmp/claude-statusline-pr-${key}"
+# Prints the cached output of "$@" (cache name $1) and refreshes it in the background when
+# older than a minute, so slow commands (network, daemons) never block a render.
+bg_cached() {
+    local cache="/tmp/claude-statusline-$1"; shift
     if [ ! -f "$cache" ] || [ -n "$(find "$cache" -mmin +1 2>/dev/null)" ]; then
         touch "$cache"
-        (cd "$dir" && gh pr view "$branch" --json state,number,url,reviewDecision,statusCheckRollup --jq 'select(.state == "OPEN") |
-            ([.statusCheckRollup[]? | (.conclusion // .state // "")] ) as $c |
-            (if ($c | length) == 0 then ""
-             elif any($c[]; test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED")) then "fail"
-             elif any($c[]; . == "" or test("PENDING|QUEUED|IN_PROGRESS|EXPECTED")) then "pending"
-             else "pass" end) as $checks |
-            [.number, $checks, (.reviewDecision // ""), .url] | @tsv
-        ' > "$cache.$$" 2>/dev/null; mv "$cache.$$" "$cache") </dev/null >/dev/null 2>&1 &
+        ("$@" > "$cache.$$" 2>/dev/null; mv "$cache.$$" "$cache") </dev/null >/dev/null 2>&1 &
     fi
     cat "$cache" 2>/dev/null
+}
+
+_fetch_pr() {
+    cd "$1" && gh pr view "$2" --json state,number,url,reviewDecision,statusCheckRollup --jq 'select(.state == "OPEN") |
+        ([.statusCheckRollup[]? | (.conclusion // .state // "")] ) as $c |
+        (if ($c | length) == 0 then ""
+         elif any($c[]; test("FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED")) then "fail"
+         elif any($c[]; . == "" or test("PENDING|QUEUED|IN_PROGRESS|EXPECTED")) then "pending"
+         else "pass" end) as $checks |
+        [.number, $checks, (.reviewDecision // ""), .url] | @tsv'
+}
+
+# Open PR (not merged/closed) for the current branch via gh: "number<TAB>checks<TAB>review<TAB>url"
+get_pr_status() {
+    local dir=$1 branch=$2
+    command -v gh >/dev/null 2>&1 && [ -n "$branch" ] && [ "$branch" != "detached" ] || return
+    bg_cached "pr-$(printf '%s' "${dir}|${branch}" | cksum | cut -d' ' -f1)" _fetch_pr "$dir" "$branch"
+}
+
+# Running container count; empty without docker or a running daemon
+get_docker_count() {
+    command -v docker >/dev/null 2>&1 || return
+    local n
+    n=$(bg_cached docker docker ps -q | grep -c .)
+    [ "$n" -gt 0 ] && printf '%s' "$n"
+}
+
+# macOS notification, once per key (flag file in /tmp), sent in the background
+notify_once() {
+    local flag="/tmp/claude-statusline-notified-$1"
+    [ "$NOTIFICATIONS" = "true" ] && [ ! -f "$flag" ] && command -v osascript >/dev/null 2>&1 || return
+    : > "$flag"
+    osascript -e "display notification \"${3//\"/}\" with title \"${2//\"/}\" sound name \"Submarine\"" \
+        </dev/null >/dev/null 2>&1 &
 }
 
 # https URL of the origin remote (GitHub/GitLab style), empty when unknown
@@ -1862,6 +1892,10 @@ format_rate_window() {
     fi
 
     if [ "$pct" -ge 90 ] || [ -n "$eta" ]; then
+        # Keyed by window reset time: one notification per window
+        local why="${pct}% used"
+        [ -n "$eta" ] && why+=", projected to run out ~${eta}"
+        notify_once "quota-${label}-${resets}" "Claude ${label} limit" "${why}. Resets in $(format_duration "$now" "$resets")."
         seg="${C_ALERT}⚠ ${label}${C_RESET} "
     else
         seg="${label} "
@@ -2185,8 +2219,8 @@ main() {
             END { s = NR > 12 ? 2 : 1
                   for (i = s; i <= NR; i++) printf "%s ", c[i]; print ""
                   for (i = (s > 1 ? s : 2); i <= NR; i++) printf "%d ", d[i] - d[i-1]; print "" }')
-        [ "$(wc -w <<< "$ctx_hist")" -ge 3 ] && ctx_spark=$(sparkline "$ctx_hist" 100)
-        [ "$(wc -w <<< "$cost_hist")" -ge 3 ] && cost_spark=$(sparkline "$cost_hist")
+        ctx_spark=$(sparkline "$ctx_hist" 100)
+        cost_spark=$(sparkline "$cost_hist")
     fi
 
     local spend_today=0 spend_week=0
@@ -2197,7 +2231,6 @@ main() {
     # ========================================================================
 
     local -a out_lines=()
-    local -a out_types=()
     local SEP=" ${C_GRAY}┊${C_RESET} "
 
     # --- Line 1: Model · Provider · Cost · Duration · Msg  ┊  Tokens · Ctx ---
@@ -2233,6 +2266,8 @@ main() {
     if [ "$context_usage_pct" -gt 0 ]; then
         local ctx_label=""
         [ "$context_usage_pct" -ge 85 ] && ctx_label="${C_ALERT}⚠ ctx${C_RESET} "
+        [ "$context_usage_pct" -ge 90 ] && notify_once "ctx-${session_id}" "Claude context ${context_usage_pct}%" \
+            "${session_name:-$dir}: context almost full, auto-compact is near."
         s1+=("1${T}${SEP}${T}${ctx_label}$(make_bar "$context_usage_pct") ${context_usage_color}${context_usage_pct}%${C_RESET}")
         s1+=("5${T} ${T}${C_GRAY}($(format_k "$current_total_tokens")/$(format_k "$context_size"))${C_RESET}")
         [ -n "$ctx_spark" ] && s1+=("6${T} ${T}${C_GRAY}${ctx_spark}${C_RESET}")
@@ -2260,8 +2295,18 @@ main() {
     # Gutter (4 cols) + margin; Claude Code passes the terminal width in COLUMNS
     local line_width=999
     [[ "$COLUMNS" =~ ^[0-9]+$ ]] && line_width=$((COLUMNS - 6))
+    # zen: one line of essentials (prio ≤3) plus alerts; compact: first two lines
+    local mode="${STATUSLINE_MODE:-$(cat "${HOME}/.cache/claude-statusline/mode" 2>/dev/null)}"
+    if [ "$mode" = "zen" ]; then
+        local -a zen_segs=()
+        local seg
+        for seg in "${s1[@]}"; do
+            { [ "${seg%%$'\t'*}" -le 3 ] || [[ "$seg" == *⚠* ]]; } && zen_segs+=("$seg")
+        done
+        s1=("${zen_segs[@]}")
+    fi
     l1=$(fit_line "$line_width" "${s1[@]}")
-    out_lines+=("$l1"); out_types+=("n")
+    out_lines+=("$l1")
 
     # --- Line 2: Git/folder + changes  ┊  Stats  ┊  Dev + Config ---
     local -a s2=()
@@ -2295,6 +2340,11 @@ main() {
                 CHANGES_REQUESTED) pr_seg+=" ${C_RED}changes${C_RESET}" ;;
             esac
             s2+=("2${T}${D}${T}${C_BLUE}$(osc_link "$pr_url" "$pr_seg")${C_RESET}")
+        fi
+        if [ "$SHOW_STASH" = "true" ]; then
+            local stash_count
+            stash_count=$(git -C "$current_dir" stash list 2>/dev/null | grep -c .)
+            [ "$stash_count" -gt 0 ] && s2+=("6${T}${D}${T}${C_YELLOW}⚑ ${stash_count} stash${C_RESET}")
         fi
         [ -n "$last_commit_time" ] && s2+=("7${T}${D}${T}${C_GRAY}${last_commit_time}${C_RESET}")
         [ -n "$commits_today" ] && s2+=("8${T}${D}${T}${C_GREEN}${commits_today} today${C_RESET}")
@@ -2333,6 +2383,12 @@ main() {
         [ -n "$dev_cfg" ] && dev_cfg+=" · "
         dev_cfg+="${C_GREEN}${running_servers}${C_RESET}"
     fi
+    local docker_count=""
+    [ "$SHOW_DOCKER" = "true" ] && docker_count=$(get_docker_count)
+    if [ -n "$docker_count" ]; then
+        [ -n "$dev_cfg" ] && dev_cfg+=" · "
+        dev_cfg+="${C_BLUE}🐳 ${docker_count}${C_RESET}"
+    fi
 
     local config_parts=()
     [ "$SHOW_CLAUDE_MD" = "true" ] && [ "$claude_md_count" -gt 0 ] && config_parts+=("📝 ${claude_md_count}")
@@ -2351,7 +2407,7 @@ main() {
     [ -n "$stats_sec" ] && s2+=("9${T}${SEP}${T}${stats_sec}")
     [ -n "$dev_cfg" ] && s2+=("4${T}${SEP}${T}${dev_cfg}")
 
-    out_lines+=("$(fit_line "$line_width" "${s2[@]}")"); out_types+=("n")
+    out_lines+=("$(fit_line "$line_width" "${s2[@]}")")
 
     # --- Dynamic lines: Tools, Agents, Todos (only when active) ---
     local running_tools_count completed_tools_output
@@ -2394,7 +2450,7 @@ main() {
             lt+="${C_GREEN}${completed_tools_output% }${C_RESET}"
         fi
 
-        out_lines+=("$lt"); out_types+=("n")
+        out_lines+=("$lt")
     fi
 
     local running_agents_count
@@ -2418,7 +2474,7 @@ main() {
         [ -n "$elapsed" ] && la+=" ${C_GRAY}(${elapsed})${C_RESET}"
         [ "$running_agents_count" -gt 1 ] && la+=" ${C_GRAY}+$((running_agents_count - 1)) more${C_RESET}"
 
-        out_lines+=("$la"); out_types+=("n")
+        out_lines+=("$la")
     fi
 
     local todos_count
@@ -2444,15 +2500,19 @@ main() {
         fi
         ltodo+=" ${C_GRAY}(${completed_count}/${todos_count})${C_RESET}"
 
-        out_lines+=("$ltodo"); out_types+=("n")
+        out_lines+=("$ltodo")
     fi
 
     # --- Render with rounded box-drawing gutter ---
     local total=${#out_lines[@]} gutter_color="${C_GRAY}"
+    [ "$mode" = "zen" ] && total=1
+    [ "$mode" = "compact" ] && [ "$total" -gt 2 ] && total=2
     [[ "$l1" == *⚠* ]] && gutter_color="${C_RED}"
     for ((i=0; i<total; i++)); do
         local gutter
-        if [ $i -eq 0 ]; then
+        if [ "$total" -eq 1 ]; then
+            gutter="${gutter_color}›${C_RESET}"
+        elif [ $i -eq 0 ]; then
             gutter="${gutter_color}╭${C_RESET}"
         elif [ $i -eq $((total - 1)) ]; then
             gutter="${gutter_color}╰${C_RESET}"
@@ -2463,6 +2523,15 @@ main() {
     done
 }
 
-# Run main
+# `statusline-command.sh --mode zen|compact|full` switches the layout for every session
+if [ "$1" = "--mode" ]; then
+    case "$2" in
+        zen|compact|full)
+            mkdir -p "${HOME}/.cache/claude-statusline" && echo "$2" > "${HOME}/.cache/claude-statusline/mode"
+            echo "statusline mode: $2"; exit 0 ;;
+        *) echo "usage: $0 --mode zen|compact|full" >&2; exit 1 ;;
+    esac
+fi
+
 main
 exit 0

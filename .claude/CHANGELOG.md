@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-17 — Notifications, modes, docker & stash
+- macOS notifications (once per window/session): limit ≥90% or projected run-out, context ≥90%
+- Modes zen/compact/full via `--mode` or `STATUSLINE_MODE`
+- Stash count + running Docker containers on line 2
+- `bg_cached` helper shared by PR status and docker
+- Config: theme set to catppuccin (shared by all account symlinks)
+
 ## 2026-10-17 — Sparklines, spend ledger, PR status, themes
 - Sparklines: cost per message + context trend
 - `today $X wk $Y` spend across sessions (per-day ledger, midnight-split, resume-safe)

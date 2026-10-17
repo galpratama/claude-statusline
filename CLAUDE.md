@@ -31,6 +31,8 @@ This is a custom statusline for Claude Code that displays AI model information, 
 - `grad_color` / `make_bar` - truecolor gradient + 1/8-cell bar (16-color fallback); `fit_line` - drops segments by priority to fit `$COLUMNS`. Lines 1-2 are built as `prio<TAB>sep<TAB>text` segments
 - `sparkline` (history in `/tmp/claude-hist-{session_id}`), `cost_ledger` (per-day spend in `~/.cache/claude-statusline/cost-YYYY-MM-DD.tsv`), `get_pr_status` (background `gh`, cache `/tmp/claude-statusline-pr-<cksum>`), `osc_link` / `get_repo_url`
 - Theme palette is resolved before the `readonly` color constants (one extra `jq` on the config)
+- `bg_cached` - background-refreshed command cache (PR via `_fetch_pr`, docker); `notify_once` - osascript notification keyed by a flag in `/tmp/claude-statusline-notified-*`
+- Mode (`zen`/`compact`/`full`): `STATUSLINE_MODE` or `~/.cache/claude-statusline/mode`, set with `--mode`
 - `calculate_cost` - only used when the input has no `.cost.total_cost_usd`
 
 ### Input fields used
@@ -45,6 +47,11 @@ Test the statusline manually (capture a real input first by temporarily adding
 `printf '%s' "$input" > /tmp/statusline-debug.json` after `input=$(cat)` in `main`):
 ```bash
 bash ~/Scripts/claude-statusline/statusline-command.sh < /tmp/statusline-debug.json
+```
+
+Replaying a captured input with your real HOME pollutes the live session's state (cost ledger in `~/.cache/claude-statusline/`, `/tmp/claude-hist-*`): the stale lower cost looks like a resume. Use a fake HOME and another session id:
+```bash
+jq '.session_id="test"' /tmp/statusline-debug.json | HOME=$(mktemp -d) bash statusline-command.sh
 ```
 
 Time it with `/usr/bin/time -p`. Profile per line with
