@@ -147,7 +147,7 @@ load_config() {
         v(.segments.ai.show_claude_md; "true"), v(.segments.tools.enabled; "true"),
         v(.segments.agents.enabled; "true"), v(.segments.todos.enabled; "true"),
         v(.features.notifications; "true"), v(.segments.dev.show_docker; "true"), v(.segments.git.show_stash; "true"),
-        v(.display.theme; "default")
+        v(.display.theme; "default"), v(.features.memory_pressure; "true")
     ' "$CONFIG_FILE" 2>/dev/null); then
         {
             read -r SHOW_PROVIDER; read -r SHOW_MODEL
@@ -163,7 +163,7 @@ load_config() {
             read -r SHOW_CLAUDE_MD; read -r SHOW_RUNNING_TOOLS
             read -r SHOW_AGENTS; read -r SHOW_TODOS
             read -r NOTIFICATIONS; read -r SHOW_DOCKER; read -r SHOW_STASH
-            read -r DISPLAY_THEME
+            read -r DISPLAY_THEME; read -r SHOW_MEM_PRESSURE
         } <<< "$config_values"
     else
         # Defaults when no config file
@@ -195,6 +195,7 @@ load_config() {
         NOTIFICATIONS="true"
         SHOW_DOCKER="true"
         SHOW_STASH="true"
+        SHOW_MEM_PRESSURE="true"
     fi
 
     # String booleans to 0/1
@@ -2348,6 +2349,14 @@ main() {
             [ "$msgs_left" -le 10 ] && left_color="${C_ALERT}"
             s1+=("3${T} ${T}${left_color}~${msgs_left} msg left${C_RESET}")
         fi
+    fi
+
+    # macOS memory pressure (1 normal, 2 warn, 4 critical): a hint to move heavy work elsewhere
+    if [ "$SHOW_MEM_PRESSURE" = "true" ] && [ "$_OS_FLAVOR" = "bsd" ]; then
+        case "$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null)" in
+            2) s1+=("1${T}${SEP}${T}${C_WARN}⚠ RAM${C_RESET}") ;;
+            4) s1+=("1${T}${SEP}${T}${C_ALERT}⚠ RAM critical${C_RESET}") ;;
+        esac
     fi
 
     local cache_section=""
