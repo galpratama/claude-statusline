@@ -5,7 +5,9 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 STALE_DAYS=7
 
-python3 "$DIR/patch-honcho.py" --hook 2>/dev/null
+# Windows' python3 is a Microsoft Store stub that only prints an install hint
+PY=python3; "$PY" -c '' 2>/dev/null || PY=python
+"$PY" "$DIR/patch-honcho.py" --hook 2>/dev/null
 
 # Deleted files go to the macOS Trash (never rm); skip pruning if `trash` isn't available
 if command -v trash >/dev/null 2>&1; then
