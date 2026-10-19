@@ -14,91 +14,87 @@
 # CONSTANTS
 # ============================================================================
 
+# Every fork costs ~25ms on Windows (Git Bash) vs ~1ms on macOS, so the render path avoids
+# $(...), pipes and external tools: helpers return through globals (REPLY, GRAD, CAP).
 readonly CONFIG_FILE="${HOME}/.claude/statusline-config.json"
-STATUSLINE_CONFIG_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/statusline-config.json"
-readonly STATUSLINE_CONFIG_FILE
+_script_dir=${BASH_SOURCE[0]%/*}
+[ "$_script_dir" = "${BASH_SOURCE[0]}" ] && _script_dir=.
+[[ "$_script_dir" == /* ]] || _script_dir="$PWD/$_script_dir"
+readonly STATUSLINE_CONFIG_FILE="$_script_dir/statusline-config.json"
 # Per-session state and caches live in a private per-user dir, not shared /tmp
 # (predictable /tmp names could be pre-created as symlinks by another local user)
 readonly STATE_DIR="${HOME}/.cache/claude-statusline/state"
 # One clock read per render; STATUSLINE_NOW freezes time for the snapshot tests
-NOW=${STATUSLINE_NOW:-$(date +%s)}
+NOW=${STATUSLINE_NOW:-${EPOCHSECONDS:-$(date +%s)}}
 
 # shellcheck disable=SC2174  # only STATE_DIR itself needs to be private
-mkdir -p -m 700 "$STATE_DIR" 2>/dev/null
+[ -d "$STATE_DIR" ] || mkdir -p -m 700 "$STATE_DIR" 2>/dev/null
 
-# ============================================================================
-# COLOR DEFINITIONS
-# ============================================================================
+# Whole file into REPLY (trailing newline stripped, like $(cat)); fails when unreadable
+slurp() {
+    REPLY=""
+    [ -r "$1" ] || return 1
+    IFS= read -r -d '' REPLY < "$1"
+    REPLY=${REPLY%$'\n'}
+    return 0
+}
 
-# 24-bit gradients when the terminal advertises them; STATUSLINE_TRUECOLOR=0 forces 16 colors
-TRUECOLOR=0
-[[ "$COLORTERM" =~ ^(truecolor|24bit)$ ]] && [ "${STATUSLINE_TRUECOLOR:-1}" != 0 ] && TRUECOLOR=1
+# Succeeds with the cached value in REPLY when file $1 ("epoch\nvalue", see stamp_cache)
+# is younger than $2 seconds
+fresh_cache() {
+    local at=""
+    REPLY=""
+    [ -f "$1" ] && { read -r at; IFS= read -r REPLY; } < "$1" &&
+        [[ "$at" =~ ^[0-9]+$ ]] && [ $((NOW - at)) -lt "$2" ]
+}
 
-# Theme palettes (truecolor only), R;G;B in order: cyan blue purple green yellow red gray.
-# "default" keeps the terminal's own 16-color palette.
-THEME_PALETTE=""
-if [ "$TRUECOLOR" = 1 ]; then
-    case "$(jq -r '.display.theme // "default"' "$CONFIG_FILE" 2>/dev/null)" in
-        catppuccin) THEME_PALETTE="137;220;235 137;180;250 203;166;247 166;227;161 249;226;175 243;139;168 127;132;156" ;;
-        tokyonight) THEME_PALETTE="125;207;255 122;162;247 187;154;247 158;206;106 224;175;104 247;118;142 86;95;137" ;;
-        dracula)    THEME_PALETTE="139;233;253 130;170;255 189;147;249 80;250;123 241;250;140 255;85;85 98;114;164" ;;
-        nord)       THEME_PALETTE="136;192;208 129;161;193 180;142;173 163;190;140 235;203;139 191;97;106 110;120;140" ;;
-        rosepine)   THEME_PALETTE="156;207;216 49;116;143 196;167;231 156;207;216 246;193;119 235;111;146 110;106;134" ;;
-    esac
-fi
-if [ -n "$THEME_PALETTE" ]; then
-    read -r _cy _bl _pu _gr _ye _re _gy <<< "$THEME_PALETTE"
-    readonly C_CYAN="\033[38;2;${_cy}m" C_BLUE="\033[38;2;${_bl}m" C_PURPLE="\033[38;2;${_pu}m"
-    readonly C_GREEN="\033[38;2;${_gr}m" C_YELLOW="\033[38;2;${_ye}m" C_RED="\033[38;2;${_re}m"
-    readonly C_GRAY="\033[38;2;${_gy}m"
-    # Gradient stops follow the theme's green/yellow/red
-    GRAD_LO=${_gr//;/ } GRAD_MID=${_ye//;/ } GRAD_HI=${_re//;/ }
-else
-    readonly C_CYAN="\033[36m" C_BLUE="\033[34m" C_PURPLE="\033[35m"
-    readonly C_GREEN="\033[32m" C_YELLOW="\033[33m" C_RED="\033[31m" C_GRAY="\033[90m"
-    GRAD_LO="80 200 120" GRAD_MID="235 195 70" GRAD_HI="240 80 80"
-fi
-read -r LO_R LO_G LO_B <<< "$GRAD_LO"
-read -r MID_R MID_G MID_B <<< "$GRAD_MID"
-read -r HI_R HI_G HI_B <<< "$GRAD_HI"
-readonly C_RESET="\033[0m"
-readonly C_ALERT="\033[1m${C_RED}"
-readonly C_WARN="\033[1m${C_YELLOW}"
+stamp_cache() {
+    printf '%s\n%s\n' "$NOW" "$2" > "$1"
+}
+
+# Strings to a short stable cache key (replaces `cksum` in file names)
+cache_key() {
+    REPLY=${1//[^A-Za-z0-9._-]/_}
+}
 
 # ============================================================================
 # UTILITY FUNCTIONS
 # ============================================================================
 
-# Format number in k/M notation with two decimal places
+# Sets REPLY to the number in k/M notation with up to two decimals
 format_k() {
     local num=$1
 
     # Handle empty or non-numeric values
     if [ -z "$num" ] || ! [[ "$num" =~ ^[0-9]+$ ]]; then
-        echo "0"
+        REPLY=0
         return
     fi
 
     local div suffix h frac
     if [ "$num" -ge 1000000 ]; then div=1000000 suffix=M
     elif [ "$num" -ge 1000 ]; then div=1000 suffix=k
-    else echo "$num"; return; fi
+    else REPLY=$num; return; fi
     h=$(( (num * 100 + div / 2) / div ))
     printf -v frac '%02d' $((h % 100))
     frac=${frac%0}; frac=${frac%0}
-    echo "$((h / 100))${frac:+.$frac}${suffix}"
-}
-
-# Convert string boolean to bash boolean (0/1)
-str_to_bool() {
-    [[ "$1" == "true" ]] && echo 1 || echo 0
+    REPLY="$((h / 100))${frac:+.$frac}${suffix}"
 }
 
 # --- Cross-platform date/stat helpers (BSD/macOS vs GNU/Linux) ---
-case "$(uname -s)" in
-    Darwin) _OS_FLAVOR="bsd" ;;
-    *)      _OS_FLAVOR="gnu" ;;
+case "$OSTYPE" in
+    darwin*) _OS_FLAVOR="bsd" ;;
+    *)       _OS_FLAVOR="gnu" ;;
 esac
+
+# Native Windows jq.exe (Git Bash) writes CRLF; --binary keeps "\r" out of parsed values.
+case "$OSTYPE" in
+    msys*|cygwin*) jq() { command jq --binary "$@"; } ;;
+esac
+
+# bash 4.2+ formats dates without forking `date`
+_HAS_PRINTF_T=""
+printf -v _probe '%(%Y)T' 0 2>/dev/null && [ "$_probe" != "%(%Y)T" ] && _HAS_PRINTF_T=1
 
 # Parse a date/datetime string to epoch seconds
 # usage: _date_to_epoch "<bsd_input_format>" "<value>"
@@ -117,6 +113,15 @@ _epoch_to_fmt() {
         date -j -f "%s" "$1" "$2" 2>/dev/null
     else
         date -d "@$1" "$2" 2>/dev/null
+    fi
+}
+
+# Same as _epoch_to_fmt into REPLY; forks only on bash < 4.2 (macOS /bin/bash)
+epoch_fmt() {
+    if [ -n "$_HAS_PRINTF_T" ]; then
+        printf -v REPLY "%(${2#+})T" "$1"
+    else
+        REPLY=$(_epoch_to_fmt "$1" "$2")
     fi
 }
 
@@ -141,7 +146,8 @@ load_config() {
         v(.segments.ai.show_rules; "true"), v(.segments.ai.show_hooks; "true"),
         v(.segments.ai.show_claude_md; "true"), v(.segments.tools.enabled; "true"),
         v(.segments.agents.enabled; "true"), v(.segments.todos.enabled; "true"),
-        v(.features.notifications; "true"), v(.segments.dev.show_docker; "true"), v(.segments.git.show_stash; "true")
+        v(.features.notifications; "true"), v(.segments.dev.show_docker; "true"), v(.segments.git.show_stash; "true"),
+        v(.display.theme; "default")
     ' "$CONFIG_FILE" 2>/dev/null); then
         {
             read -r SHOW_PROVIDER; read -r SHOW_MODEL
@@ -157,6 +163,7 @@ load_config() {
             read -r SHOW_CLAUDE_MD; read -r SHOW_RUNNING_TOOLS
             read -r SHOW_AGENTS; read -r SHOW_TODOS
             read -r NOTIFICATIONS; read -r SHOW_DOCKER; read -r SHOW_STASH
+            read -r DISPLAY_THEME
         } <<< "$config_values"
     else
         # Defaults when no config file
@@ -190,10 +197,51 @@ load_config() {
         SHOW_STASH="true"
     fi
 
-    # Convert string booleans
-    CLAUDE_STATUSLINE_LINT=$(str_to_bool "$CLAUDE_STATUSLINE_LINT")
-    CLAUDE_STATUSLINE_SERVERS=$(str_to_bool "$CLAUDE_STATUSLINE_SERVERS")
+    # String booleans to 0/1
+    [ "$CLAUDE_STATUSLINE_LINT" = "true" ] && CLAUDE_STATUSLINE_LINT=1 || CLAUDE_STATUSLINE_LINT=0
+    [ "$CLAUDE_STATUSLINE_SERVERS" = "true" ] && CLAUDE_STATUSLINE_SERVERS=1 || CLAUDE_STATUSLINE_SERVERS=0
 }
+
+load_config
+
+# ============================================================================
+# COLOR DEFINITIONS
+# ============================================================================
+
+# 24-bit gradients when the terminal advertises them; STATUSLINE_TRUECOLOR=0 forces 16 colors
+TRUECOLOR=0
+[[ "$COLORTERM" =~ ^(truecolor|24bit)$ ]] && [ "${STATUSLINE_TRUECOLOR:-1}" != 0 ] && TRUECOLOR=1
+
+# Theme palettes (truecolor only), R;G;B in order: cyan blue purple green yellow red gray.
+# "default" keeps the terminal's own 16-color palette.
+THEME_PALETTE=""
+if [ "$TRUECOLOR" = 1 ]; then
+    case "$DISPLAY_THEME" in
+        catppuccin) THEME_PALETTE="137;220;235 137;180;250 203;166;247 166;227;161 249;226;175 243;139;168 127;132;156" ;;
+        tokyonight) THEME_PALETTE="125;207;255 122;162;247 187;154;247 158;206;106 224;175;104 247;118;142 86;95;137" ;;
+        dracula)    THEME_PALETTE="139;233;253 130;170;255 189;147;249 80;250;123 241;250;140 255;85;85 98;114;164" ;;
+        nord)       THEME_PALETTE="136;192;208 129;161;193 180;142;173 163;190;140 235;203;139 191;97;106 110;120;140" ;;
+        rosepine)   THEME_PALETTE="156;207;216 49;116;143 196;167;231 156;207;216 246;193;119 235;111;146 110;106;134" ;;
+    esac
+fi
+if [ -n "$THEME_PALETTE" ]; then
+    read -r _cy _bl _pu _gr _ye _re _gy <<< "$THEME_PALETTE"
+    readonly C_CYAN="\033[38;2;${_cy}m" C_BLUE="\033[38;2;${_bl}m" C_PURPLE="\033[38;2;${_pu}m"
+    readonly C_GREEN="\033[38;2;${_gr}m" C_YELLOW="\033[38;2;${_ye}m" C_RED="\033[38;2;${_re}m"
+    readonly C_GRAY="\033[38;2;${_gy}m"
+    # Gradient stops follow the theme's green/yellow/red
+    GRAD_LO=${_gr//;/ } GRAD_MID=${_ye//;/ } GRAD_HI=${_re//;/ }
+else
+    readonly C_CYAN="\033[36m" C_BLUE="\033[34m" C_PURPLE="\033[35m"
+    readonly C_GREEN="\033[32m" C_YELLOW="\033[33m" C_RED="\033[31m" C_GRAY="\033[90m"
+    GRAD_LO="80 200 120" GRAD_MID="235 195 70" GRAD_HI="240 80 80"
+fi
+read -r LO_R LO_G LO_B <<< "$GRAD_LO"
+read -r MID_R MID_G MID_B <<< "$GRAD_MID"
+read -r HI_R HI_G HI_B <<< "$GRAD_HI"
+readonly C_RESET="\033[0m"
+readonly C_ALERT="\033[1m${C_RED}"
+readonly C_WARN="\033[1m${C_YELLOW}"
 
 # ============================================================================
 # MODEL FORMATTING
@@ -1084,7 +1132,18 @@ calculate_cost() {
 # SUBSCRIPTION INFO
 # ============================================================================
 
+# Sets REPLY; the renewal countdown (a jq plus date forks) is cached for an hour
 get_subscription_info() {
+    local cache
+    REPLY=""
+    [ -f "$STATUSLINE_CONFIG_FILE" ] || return
+    cache_key "$1"; cache="${STATE_DIR}/sub-${REPLY}"
+    [ ! "$STATUSLINE_CONFIG_FILE" -nt "$cache" ] && fresh_cache "$cache" 3600 && return
+    REPLY=$(_subscription_info "$1")
+    stamp_cache "$cache" "$REPLY"
+}
+
+_subscription_info() {
     local provider="$1"
     local current_timestamp
     current_timestamp=$NOW
@@ -1149,82 +1208,69 @@ get_subscription_info() {
 # LANGUAGE & PACKAGE MANAGER DETECTION
 # ============================================================================
 
-# Returns: "pkg1+pkg2|lang1+lang2" format
+# Sets REPLY to the first word-split field $2 of "$3 ..."'s first output line, cached for an hour
+# per tool ($1) so versions don't cost a fork per render.
+# shortcut: one cache per tool name, so a PATH switch (nvm, herd) shows up within the hour
+tool_version() {
+    local field=$2 f="${STATE_DIR}/ver-$1" out
+    local -a words
+    shift 2
+    REPLY=""
+    command -v "$1" >/dev/null 2>&1 || return
+    fresh_cache "$f" 3600 && return
+    out=$("$@" 2>/dev/null)
+    read -ra words <<< "${out%%$'\n'*}"
+    REPLY=${words[field - 1]}
+    stamp_cache "$f" "$REPLY"
+}
+
+# Appends "+$2" to the global $1 list ("a+b")
+_add() {
+    [ -z "$2" ] && return
+    if [ -n "${!1}" ]; then printf -v "$1" '%s+%s' "${!1}" "$2"; else printf -v "$1" '%s' "$2"; fi
+}
+
+# Sets REPLY to "pkg1+pkg2|lang1+lang2"
 detect_dev_environment() {
     local dir="$1"
-    local pkg_managers=""
-    local languages=""
+    local pkg_managers="" languages=""
 
     # JavaScript/Node.js
-    if [ -f "$dir/pnpm-lock.yaml" ]; then
-        pkg_managers="pnpm"
-        command -v node >/dev/null 2>&1 && languages="Node $(node --version 2>/dev/null | sed 's/v//')"
-    elif [ -f "$dir/bun.lockb" ]; then
-        pkg_managers="bun"
-        command -v bun >/dev/null 2>&1 && languages="Bun $(bun --version 2>/dev/null)"
-    elif [ -f "$dir/yarn.lock" ]; then
-        pkg_managers="yarn"
-        command -v node >/dev/null 2>&1 && languages="Node $(node --version 2>/dev/null | sed 's/v//')"
-    elif [ -f "$dir/package-lock.json" ] || [ -f "$dir/package.json" ]; then
-        pkg_managers="npm"
-        command -v node >/dev/null 2>&1 && languages="Node $(node --version 2>/dev/null | sed 's/v//')"
+    if [ -f "$dir/pnpm-lock.yaml" ]; then pkg_managers="pnpm"
+    elif [ -f "$dir/bun.lockb" ]; then pkg_managers="bun"
+    elif [ -f "$dir/yarn.lock" ]; then pkg_managers="yarn"
+    elif [ -f "$dir/package-lock.json" ] || [ -f "$dir/package.json" ]; then pkg_managers="npm"
+    fi
+    if [ "$pkg_managers" = "bun" ]; then
+        tool_version bun 1 bun --version; [ -n "$REPLY" ] && languages="Bun $REPLY"
+    elif [ -n "$pkg_managers" ]; then
+        tool_version node 1 node --version; [ -n "$REPLY" ] && languages="Node ${REPLY#v}"
     fi
 
-    # PHP
     if [ -f "$dir/composer.json" ]; then
-        [ -n "$pkg_managers" ] && pkg_managers+="+composer" || pkg_managers="composer"
-        if command -v php >/dev/null 2>&1; then
-            local php_ver
-            php_ver="PHP $(php --version 2>/dev/null | head -1 | awk '{print $2}')"
-            [ -n "$languages" ] && languages+="+$php_ver" || languages="$php_ver"
-        fi
+        _add pkg_managers composer
+        tool_version php 2 php --version; [ -n "$REPLY" ] && _add languages "PHP $REPLY"
     fi
-
-    # Ruby
     if [ -f "$dir/Gemfile" ]; then
-        [ -n "$pkg_managers" ] && pkg_managers+="+gem" || pkg_managers="gem"
-        if command -v ruby >/dev/null 2>&1; then
-            local ruby_ver
-            ruby_ver="Ruby $(ruby --version 2>/dev/null | awk '{print $2}')"
-            [ -n "$languages" ] && languages+="+$ruby_ver" || languages="$ruby_ver"
-        fi
+        _add pkg_managers gem
+        tool_version ruby 2 ruby --version; [ -n "$REPLY" ] && _add languages "Ruby $REPLY"
     fi
-
-    # Python
     if [ -f "$dir/requirements.txt" ] || [ -f "$dir/Pipfile" ] || [ -f "$dir/pyproject.toml" ]; then
-        [ -n "$pkg_managers" ] && pkg_managers+="+pip" || pkg_managers="pip"
-        if command -v python3 >/dev/null 2>&1; then
-            local py_ver
-            py_ver="Python $(python3 --version 2>/dev/null | awk '{print $2}')"
-            [ -n "$languages" ] && languages+="+$py_ver" || languages="$py_ver"
-        elif command -v python >/dev/null 2>&1; then
-            local py_ver
-            py_ver="Python $(python --version 2>/dev/null | awk '{print $2}')"
-            [ -n "$languages" ] && languages+="+$py_ver" || languages="$py_ver"
-        fi
+        _add pkg_managers pip
+        tool_version python3 2 python3 --version
+        [ -z "$REPLY" ] && tool_version python 2 python --version
+        [ -n "$REPLY" ] && _add languages "Python $REPLY"
     fi
-
-    # Go
     if [ -f "$dir/go.mod" ]; then
-        [ -n "$pkg_managers" ] && pkg_managers+="+go" || pkg_managers="go"
-        if command -v go >/dev/null 2>&1; then
-            local go_ver
-            go_ver="Go $(go version 2>/dev/null | awk '{print $3}' | sed 's/go//')"
-            [ -n "$languages" ] && languages+="+$go_ver" || languages="$go_ver"
-        fi
+        _add pkg_managers go
+        tool_version go 3 go version; [ -n "$REPLY" ] && _add languages "Go ${REPLY#go}"
     fi
-
-    # Rust
     if [ -f "$dir/Cargo.toml" ]; then
-        [ -n "$pkg_managers" ] && pkg_managers+="+cargo" || pkg_managers="cargo"
-        if command -v rustc >/dev/null 2>&1; then
-            local rust_ver
-            rust_ver="Rust $(rustc --version 2>/dev/null | awk '{print $2}')"
-            [ -n "$languages" ] && languages+="+$rust_ver" || languages="$rust_ver"
-        fi
+        _add pkg_managers cargo
+        tool_version rustc 2 rustc --version; [ -n "$REPLY" ] && _add languages "Rust $REPLY"
     fi
 
-    echo "${pkg_managers}|${languages}"
+    REPLY="${pkg_managers}|${languages}"
 }
 
 # ============================================================================
@@ -1294,96 +1340,55 @@ detect_running_servers() {
 # CONFIG COUNTING (MCP, Rules, Hooks)
 # ============================================================================
 
+# Sets REPLY
 count_claude_md_files() {
-    local cwd="$1"
-    local count=0
-    local home_dir="$HOME"
-    local claude_dir="${home_dir}/.claude"
-
-    # User scope
-    [ -f "${claude_dir}/CLAUDE.md" ] && ((count++))
-
-    # Project scope
-    if [ -n "$cwd" ]; then
-        [ -f "${cwd}/CLAUDE.md" ] && ((count++))
-        [ -f "${cwd}/CLAUDE.local.md" ] && ((count++))
-        [ -f "${cwd}/.claude/CLAUDE.md" ] && ((count++))
-        [ -f "${cwd}/.claude/CLAUDE.local.md" ] && ((count++))
-    fi
-
-    echo "$count"
-}
-
-count_rules_in_dir() {
-    local dir="$1"
-    local count=0
-
-    if [ -d "$dir" ]; then
-        count=$(find "$dir" -type f -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-    fi
-
-    echo "$count"
-}
-
-count_rules() {
-    local cwd="$1"
-    local count=0
-    local home_dir="$HOME"
-    local claude_dir="${home_dir}/.claude"
-
-    # User scope: ~/.claude/rules/*.md
-    count=$((count + $(count_rules_in_dir "${claude_dir}/rules")))
-
-    # Project scope: {cwd}/.claude/rules/*.md
-    if [ -n "$cwd" ]; then
-        count=$((count + $(count_rules_in_dir "${cwd}/.claude/rules")))
-    fi
-
-    echo "$count"
-}
-
-count_mcp_servers() {
     local cwd="$1" f
+    REPLY=0
+    for f in "${HOME}/.claude/CLAUDE.md" ${cwd:+"${cwd}/CLAUDE.md" "${cwd}/CLAUDE.local.md" "${cwd}/.claude/CLAUDE.md" "${cwd}/.claude/CLAUDE.local.md"}; do
+        [ -f "$f" ] && REPLY=$((REPLY + 1))
+    done
+}
+
+# Sets REPLY to the *.md count under ~/.claude/rules and {cwd}/.claude/rules (find only when they exist)
+count_rules() {
+    local cwd="$1" d out
+    REPLY=0
+    for d in "${HOME}/.claude/rules" ${cwd:+"${cwd}/.claude/rules"}; do
+        [ -d "$d" ] || continue
+        out=$(find "$d" -type f -name "*.md" 2>/dev/null)
+        [ -n "$out" ] || continue
+        out=${out//[!$'\n']/}
+        REPLY=$((REPLY + ${#out} + 1))
+    done
+}
+
+# Sets CFG_MCP (servers in user + project config) and CFG_HOOKS (hook events in user + project
+# settings) with one jq call, cached until one of the files changes.
+count_config() {
+    local cwd="$1" f cache stale="" out
     local -a files=()
     for f in "${HOME}/.claude/settings.json" "${HOME}/.claude.json" \
         ${cwd:+"${cwd}/.mcp.json" "${cwd}/.claude/settings.json" "${cwd}/.claude/settings.local.json"}; do
         [ -f "$f" ] && files+=("$f")
     done
-    [ ${#files[@]} -eq 0 ] && { echo 0; return; }
-    jq -n '[inputs | .mcpServers // {} | keys | length] | add // 0' "${files[@]}" 2>/dev/null || echo 0
-}
-
-count_hooks() {
-    local cwd="$1"
-    local count=0
-    local home_dir="$HOME"
-    local claude_dir="${home_dir}/.claude"
-
-    # User settings: ~/.claude/settings.json
-    if [ -f "${claude_dir}/settings.json" ]; then
-        local user_count
-        user_count=$(jq -r '.hooks // {} | keys | length' "${claude_dir}/settings.json" 2>/dev/null || echo "0")
-        count=$((count + user_count))
+    CFG_MCP=0 CFG_HOOKS=0
+    [ ${#files[@]} -eq 0 ] && return
+    cache_key "$cwd"; cache="${STATE_DIR}/cfgcount-${REPLY}"
+    [ -f "$cache" ] || stale=1
+    for f in "${files[@]}"; do [ "$f" -nt "$cache" ] && stale=1; done
+    if [ -n "$stale" ]; then
+        # ~/.claude.json and .mcp.json carry no hooks
+        out=$(jq -rn --arg no_hooks1 "${HOME}/.claude.json" --arg no_hooks2 "${cwd}/.mcp.json" '
+            reduce inputs as $d ({m: 0, h: 0};
+                .m += ($d.mcpServers // {} | length)
+                | .h += (if input_filename == $no_hooks1 or input_filename == $no_hooks2 then 0
+                         else ($d.hooks // {} | length) end))
+            | "\(.m) \(.h)"' "${files[@]}" 2>/dev/null)
+        echo "${out:-0 0}" > "$cache"
     fi
-
-    # Project scope
-    if [ -n "$cwd" ]; then
-        # {cwd}/.claude/settings.json
-        if [ -f "${cwd}/.claude/settings.json" ]; then
-            local proj_count
-            proj_count=$(jq -r '.hooks // {} | keys | length' "${cwd}/.claude/settings.json" 2>/dev/null || echo "0")
-            count=$((count + proj_count))
-        fi
-
-        # {cwd}/.claude/settings.local.json
-        if [ -f "${cwd}/.claude/settings.local.json" ]; then
-            local local_count
-            local_count=$(jq -r '.hooks // {} | keys | length' "${cwd}/.claude/settings.local.json" 2>/dev/null || echo "0")
-            count=$((count + local_count))
-        fi
-    fi
-
-    echo "$count"
+    read -r CFG_MCP CFG_HOOKS < "$cache"
+    [[ "$CFG_MCP" =~ ^[0-9]+$ ]] || CFG_MCP=0
+    [[ "$CFG_HOOKS" =~ ^[0-9]+$ ]] || CFG_HOOKS=0
 }
 
 # ============================================================================
@@ -1393,28 +1398,44 @@ count_hooks() {
 # Spinner frames for running tools
 readonly SPINNER_FRAMES=("◐" "◓" "◑" "◒")
 
-get_spinner_frame() {
-    local index=$(( NOW % 4 ))
-    echo "${SPINNER_FRAMES[$index]}"
-}
+# ripgrep is ~20x faster than BSD grep on large transcripts. An array (not a function) so
+# `<("${TSEARCH[@]}" ...)` execs it straight from the substitution's fork.
+if command -v rg >/dev/null 2>&1; then
+    TSEARCH=(rg --no-filename --no-line-number)
+else
+    TSEARCH=(env LC_ALL=C grep -h)
+fi
 
+# Writes the render-ready summary lines (see the read list in main) to $2.
+# Skipped while $2 is newer than the transcript: idle renders cost no forks.
 parse_transcript() {
     local transcript_path="$1"
     local result_file="$2"
 
     [ ! -f "$transcript_path" ] && return
+    [ "$result_file" -nt "$transcript_path" ] && return
 
     # Tool outputs are most of a transcript's bytes, so tool_result IDs are pulled with a
     # regex instead of parsing JSON; only tool_use lines get parsed. fromjson? skips a
     # partially-written last line. Background agents get an immediate "Async agent launched"
     # tool_result and only finish once a <task-notification> names their tool-use-id.
-    _tsearch -F '"type":"tool_use"' "$transcript_path" | jq -nRc \
-        --rawfile result_ids <(_tsearch -o '"tool_use_id":"[^"]*"' "$transcript_path") \
-        --rawfile async_lines <(_tsearch -F 'Async agent launched' "$transcript_path") \
-        --rawfile notified_ids <(_tsearch -o '<tool-use-id>[^<]*</tool-use-id>' "$transcript_path") '
+    "${TSEARCH[@]}" -F '"type":"tool_use"' "$transcript_path" 2>/dev/null | jq -nRr \
+        --rawfile result_ids <("${TSEARCH[@]}" -o '"tool_use_id":"[^"]*"' "$transcript_path" 2>/dev/null) \
+        --rawfile async_lines <("${TSEARCH[@]}" -F 'Async agent launched' "$transcript_path" 2>/dev/null) \
+        --rawfile notified_ids <("${TSEARCH[@]}" -o '<tool-use-id>[^<]*</tool-use-id>' "$transcript_path" 2>/dev/null) '
         def is_agent: .name == "Agent" or .name == "Task";
         def text: if type == "array" then map(.text? // "") | join("") else tostring end;
         def id_set(s; re): [s | scan(re)[0] | {key: ., value: true}] | from_entries;
+        def s: tostring | gsub("[\n\t]"; " ");
+        # Transcript timestamps are UTC ISO-8601 with milliseconds
+        def epoch: if type == "string" and . != "" then (sub("\\..*$"; "") | sub("Z$"; "") + "Z" | fromdateiso8601? // "") else "" end;
+        def target: .name as $n | (.input // {}) as $i |
+            if $n == "Read" or $n == "Write" or $n == "Edit" then ($i.file_path // $i.path // "" | split("/") | last // "" | split("\\") | last // "")
+            elif $n == "Glob" then ($i.pattern // "")
+            elif $n == "Grep" then ($i.pattern // "" | .[:20])
+            elif $n == "Bash" then (($i.command // "") | .[:25]) + "..."
+            elif $n == "Task" then ($i.description // "")
+            else "" end;
         id_set($result_ids; "\"tool_use_id\":\"([^\"]+)\"") as $results
         | id_set($notified_ids; "<tool-use-id>([^<]+)</tool-use-id>") as $notified
         | ([$async_lines | split("\n")[] | fromjson? | .message.content[]?
@@ -1424,31 +1445,25 @@ parse_transcript() {
             .timestamp as $ts | .message.content[] | select(.type == "tool_use") |
             {id, name, input, timestamp: $ts} | (.id // "") as $id
             | .done = (if $async[$id] then $notified[$id] // false else $results[$id] // false end)] as $uses
-        | {
-            running_tools: [$uses[] | select((.done | not) and .name != "TodoWrite" and (is_agent | not)) | del(.done)],
-            running_agents: [$uses[] | select(is_agent and (.done | not)) | del(.done)],
-            todos: ([$uses[] | select(.name == "TodoWrite")] | last | .input.todos // []),
-            completed_counts: ([$uses[] | select(.done and .name != "TodoWrite" and (is_agent | not))]
-                | group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count))
-          }
-    ' > "$result_file" 2>/dev/null
+        | [$uses[] | select((.done | not) and .name != "TodoWrite" and (is_agent | not))] as $t
+        | [$uses[] | select(is_agent and (.done | not))] as $a
+        | ([$uses[] | select(.name == "TodoWrite")] | last | .input.todos // []) as $d
+        | ([$uses[] | select(.done and .name != "TodoWrite" and (is_agent | not))]
+            | group_by(.name) | map({name: .[0].name, count: length}) | sort_by(-.count)) as $c
+        | ($t | length), ($t[0].name // "" | s), ($t[0] // {} | target | s), ($t[0].timestamp | epoch),
+          ($a | length), ($a[0].input.subagent_type // "unknown" | s), ($a[0].input.model // "" | s),
+          ($a[0].input.description // "" | s), ($a[0].timestamp | epoch),
+          ($d | length), ([$d[] | select(.status == "completed")] | length),
+          ([$d[] | select(.status == "in_progress")][0] // {} | .activeForm // .content // "" | s),
+          ($c[:3][] | "\(.name)\t\(.count)"), (if ($c | length) > 3 then "+\t\(($c | length) - 3)" else empty end)
+    ' > "$result_file.$$" 2>/dev/null && mv "$result_file.$$" "$result_file"
 }
 
-# ripgrep is ~20x faster than BSD grep on large transcripts
-_tsearch() {
-    if command -v rg >/dev/null 2>&1; then
-        rg --no-filename --no-line-number "$@" 2>/dev/null
-    else
-        LC_ALL=C grep -h "$@" 2>/dev/null
-    fi
-    return 0
-}
-
-# mcp__plugin_honcho_honcho__get_config -> honcho:get_config
+# mcp__plugin_honcho_honcho__get_config -> honcho:get_config (sets REPLY)
 short_tool_name() {
     local name="$1"
     if [[ "$name" != mcp__* ]]; then
-        printf '%s' "$name"
+        REPLY=$name
         return
     fi
     name=${name#mcp__}
@@ -1456,7 +1471,7 @@ short_tool_name() {
     server=${server#plugin_}
     server=${server#claude_ai_}
     [[ "$server" == *_* && "${server%%_*}" == "${server#*_}" ]] && server=${server%%_*}
-    printf '%s:%s' "$server" "$tool"
+    REPLY="${server}:${tool}"
 }
 
 # Green → yellow (70) → red (100) color for a 0-100 value; 16-color thresholds without truecolor
@@ -1479,7 +1494,8 @@ grad_color() {
     printf -v GRAD '\\033[38;2;%d;%d;%dm' $((r1 + (r2 - r1) * t / span)) $((g1 + (g2 - g1) * t / span)) $((b1 + (b2 - b1) * t / span))
 }
 
-# Smooth bar with 1/8-cell precision; each cell is colored by its own position (gradient track)
+# Smooth bar with 1/8-cell precision; each cell is colored by its own position (gradient track).
+# Sets REPLY
 make_bar() {
     local pct=$1 width=${2:-10} i cell eighths bar=""
     local -a parts=("" "▏" "▎" "▍" "▌" "▋" "▊" "▉")
@@ -1492,17 +1508,26 @@ make_bar() {
         bar+=$GRAD
         if [ "$cell" -ge 8 ]; then bar+="█"; else bar+="${parts[$cell]}"; fi
     done
-    printf '%s' "${bar}${C_RESET}"
+    REPLY="${bar}${C_RESET}"
 }
 
-# Visible width of a string with literal or raw \033[..m color codes
+# Sets REPLY to the visible width of a string with literal or raw \033[..m color codes
+# Linear scan: bash 3.2 extglob substitution (*([0-9;])) hangs on long lines
 vis_len() {
-    local s
-    s=$(printf '%s' "$1" | sed -e 's/\\033\[[0-9;]*m//g' -e $'s/\033\\[[0-9;]*m//g')
-    printf '%s' "${#s}"
+    local s=$1 out esc
+    for esc in '\033[' $'\033['; do
+        out=""
+        while [[ "$s" == *"$esc"* ]]; do
+            out+=${s%%"$esc"*}
+            s=${s#*"$esc"}
+            s=${s#*m}
+        done
+        s="$out$s"
+    done
+    REPLY=${#s}
 }
 
-# Join "prio<TAB>sep<TAB>text" segments in display order, dropping the highest prio first
+# Sets REPLY to "prio<TAB>sep<TAB>text" segments joined in display order, dropping the highest prio first
 # until the line fits $1 columns. Prio 0 is never dropped; ⚠ alert segments go last (prio 1).
 fit_line() {
     local width=$1; shift
@@ -1519,16 +1544,18 @@ fit_line() {
             # -ge: on ties drop the rightmost segment
             if [ "$p" -gt 0 ] && [ "$p" -ge "$max" ]; then max=$p; drop=$i; fi
         done
-        { [ "$drop" -lt 0 ] || [ "$(vis_len "$line")" -le "$width" ]; } && break
+        [ "$drop" -lt 0 ] && break
+        vis_len "$line"; [ "$REPLY" -le "$width" ] && break
         segs[drop]=""
     done
-    printf '%s' "$line"
+    REPLY=$line
 }
 
-# ▁▂▃▄▅▆▇█ for space-separated integers (3+), scaled to $2 (or to their max when omitted)
+# Sets REPLY to ▁▂▃▄▅▆▇█ for space-separated integers (3+), scaled to $2 (or to their max when omitted)
 sparkline() {
     local max=${2:-0} v out=""
     local -a vals ch=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    REPLY=""
     read -ra vals <<< "$1"
     [ ${#vals[@]} -ge 3 ] || return
     if [ "$max" -eq 0 ]; then
@@ -1540,44 +1567,59 @@ sparkline() {
         [ "$v" -lt 0 ] && v=0
         out+=${ch[$((v * 7 / max))]}
     done
-    printf '%s' "$out"
+    REPLY=$out
 }
 
+# Sets REPLY
 fmt_cents() {
-    printf '$%d.%02d' $(($1 / 100)) $(($1 % 100))
+    printf -v REPLY '$%d.%02d' $(($1 / 100)) $(($1 % 100))
 }
 
-# Spend across all sessions: prints "<today cents> <last 7 days cents>".
+# Spend across all sessions: sets REPLY to "<today cents> <last 7 days cents>".
 # Per-day ledger rows: session_id, baseline (cost when first seen that day), latest cost.
 # A session spanning midnight thus splits its cost between days; a cost reset (resume)
 # carries the earlier spend forward by lowering the baseline.
 # shortcut: only counts sessions this statusline has rendered since the ledger existed
 cost_ledger() {
-    local sid=$1 cents=$2 dir="${HOME}/.cache/claude-statusline" now today cutoff file
-    [ -n "$sid" ] && mkdir -p "$dir" 2>/dev/null || return
-    now=$NOW; today=$(_epoch_to_fmt "$now" +%F)
-    cutoff=$(_epoch_to_fmt $((now - 6 * 86400)) +%F)
+    local sid=$1 cents=$2 dir="${HOME}/.cache/claude-statusline" now=$NOW today cutoff file memo
+    local m_day m_cents m_at m_t m_w
+    REPLY=""
+    [ -n "$sid" ] || return
+    [ -d "$dir" ] || mkdir -p "$dir" 2>/dev/null || return
+    epoch_fmt "$now" +%F; today=$REPLY
+    # Same day and cost as a render <60s ago: reuse its totals (awk+mv per render is ~150ms on Windows)
+    memo="${STATE_DIR}/ledger-${sid}"
+    if [ -f "$memo" ] && read -r m_day m_cents m_at m_t m_w < "$memo" && [ "$m_day" = "$today" ] &&
+        [ "$m_cents" = "$cents" ] && [[ "$m_at" =~ ^[0-9]+$ ]] && [ $((now - m_at)) -lt 60 ]; then
+        REPLY="$m_t $m_w"
+        return
+    fi
+    epoch_fmt $((now - 6 * 86400)) +%F; cutoff=$REPLY
     file="$dir/cost-${today}.tsv"
-    touch "$file"
+    [ -f "$file" ] || : > "$file"
     awk -F'\t' -v OFS='\t' -v s="$sid" -v c="$cents" '
         $1 == s { if (c < $3) $2 -= $3; $3 = c; f = 1 }
         { print }
         END { if (!f) print s, c, c }' "$file" > "$file.$$" && mv "$file.$$" "$file"
-    awk -F'\t' -v today="cost-${today}.tsv" -v cutoff="cost-${cutoff}.tsv" '
+    read -r m_t m_w < <(awk -F'\t' -v today="cost-${today}.tsv" -v cutoff="cost-${cutoff}.tsv" '
         { n = FILENAME; sub(/.*\//, "", n); if (n < cutoff) next
           d = $3 - $2; if (d < 0) d = 0; w += d; if (n == today) t += d }
-        END { printf "%d %d", t, w }' "$dir"/cost-*.tsv
+        END { printf "%d %d\n", t, w }' "$dir"/cost-*.tsv)
+    echo "$today $cents $now $m_t $m_w" > "$memo"
+    REPLY="$m_t $m_w"
 }
 
-# Prints the cached output of "$@" (cache name $1) and refreshes it in the background when
+# Sets REPLY to the cached output of "$@" (cache name $1) and refreshes it in the background when
 # older than a minute, so slow commands (network, daemons) never block a render.
+# Freshness is an epoch in "$cache.at" (no `find -mmin` fork).
 bg_cached() {
-    local cache="${STATE_DIR}/$1"; shift
-    if [ ! -f "$cache" ] || [ -n "$(find "$cache" -mmin +1 2>/dev/null)" ]; then
-        touch "$cache"
+    local cache="${STATE_DIR}/$1" at=""; shift
+    [ -f "$cache.at" ] && read -r at < "$cache.at"
+    if [[ ! "$at" =~ ^[0-9]+$ ]] || [ $((NOW - at)) -gt 60 ]; then
+        echo "$NOW" > "$cache.at"
         ("$@" > "$cache.$$" 2>/dev/null; mv "$cache.$$" "$cache") </dev/null >/dev/null 2>&1 &
     fi
-    cat "$cache" 2>/dev/null
+    slurp "$cache"
 }
 
 # shellcheck disable=SC2329,SC2016  # invoked through bg_cached; $c/$checks are jq variables
@@ -1591,19 +1633,26 @@ _fetch_pr() {
         [.number, $checks, (.reviewDecision // "")] | @tsv'
 }
 
-# Open PR (not merged/closed) for the current branch via gh: "number<TAB>checks<TAB>review"
+# Open PR (not merged/closed) for the current branch via gh: sets REPLY to "number<TAB>checks<TAB>review"
 get_pr_status() {
     local dir=$1 branch=$2
+    REPLY=""
     command -v gh >/dev/null 2>&1 && [ -n "$branch" ] && [ "$branch" != "detached" ] || return
-    bg_cached "pr-$(printf '%s' "${dir}|${branch}" | cksum | cut -d' ' -f1)" _fetch_pr "$dir" "$branch"
+    cache_key "${dir}|${branch}"
+    bg_cached "pr-$REPLY" _fetch_pr "$dir" "$branch"
 }
 
-# Running container count; empty without docker or a running daemon
+# shellcheck disable=SC2329  # invoked through bg_cached
+_docker_count() {
+    docker ps -q | grep -c .
+}
+
+# Sets REPLY to the running container count; empty without docker or a running daemon
 get_docker_count() {
+    REPLY=""
     command -v docker >/dev/null 2>&1 || return
-    local n
-    n=$(bg_cached docker docker ps -q | grep -c .)
-    [ "$n" -gt 0 ] && printf '%s' "$n"
+    bg_cached docker-count _docker_count
+    [[ "$REPLY" =~ ^[0-9]+$ ]] && [ "$REPLY" -gt 0 ] || REPLY=""
 }
 
 # macOS notification, once per key (flag file in STATE_DIR), sent in the background
@@ -1615,62 +1664,19 @@ notify_once() {
         </dev/null >/dev/null 2>&1 &
 }
 
-format_tool_target() {
-    local name="$1"
-    local input="$2"
-
-    case "$name" in
-        Read|Write|Edit)
-            local file_path
-            file_path=$(echo "$input" | jq -r '.file_path // .path // empty' 2>/dev/null)
-            if [ -n "$file_path" ]; then
-                basename "$file_path"
-            fi
-            ;;
-        Glob)
-            echo "$input" | jq -r '.pattern // empty' 2>/dev/null
-            ;;
-        Grep)
-            echo "$input" | jq -r '.pattern // empty' 2>/dev/null | head -c 20
-            ;;
-        Bash)
-            local cmd
-            cmd=$(echo "$input" | jq -r '.command // empty' 2>/dev/null)
-            echo "${cmd:0:25}..."
-            ;;
-        Task)
-            echo "$input" | jq -r '.description // empty' 2>/dev/null
-            ;;
-    esac
-}
-
+# Sets REPLY to the time since epoch $1 ("" when unknown)
 format_elapsed_time() {
-    local start_timestamp="$1"
-    local current_time="$2"
-
-    # Parse ISO timestamp to epoch
-    local start_epoch
-    # Transcript timestamps are UTC ("...Z"); parse them as UTC, not local time
-    start_epoch=$(TZ=UTC _date_to_epoch "%Y-%m-%dT%H:%M:%S" "${start_timestamp%%.*}" || echo "0")
-    [ -z "$start_epoch" ] && start_epoch="0"
-
-    if [ "$start_epoch" -eq 0 ]; then
-        echo ""
-        return
-    fi
-
-    local elapsed=$((current_time - start_epoch))
+    local start_epoch="$1" current_time="$2" elapsed
+    REPLY=""
+    [[ "$start_epoch" =~ ^[0-9]+$ ]] && [ "$start_epoch" -gt 0 ] || return
+    elapsed=$((current_time - start_epoch))
 
     if [ "$elapsed" -lt 60 ]; then
-        echo "${elapsed}s"
+        REPLY="${elapsed}s"
     elif [ "$elapsed" -lt 3600 ]; then
-        local mins=$((elapsed / 60))
-        local secs=$((elapsed % 60))
-        echo "${mins}m ${secs}s"
+        REPLY="$((elapsed / 60))m $((elapsed % 60))s"
     else
-        local hours=$((elapsed / 3600))
-        local mins=$(( (elapsed % 3600) / 60 ))
-        echo "${hours}h ${mins}m"
+        REPLY="$((elapsed / 3600))h $(( (elapsed % 3600) / 60 ))m"
     fi
 }
 
@@ -1678,15 +1684,15 @@ format_elapsed_time() {
 # GIT INFORMATION
 # ============================================================================
 
-_git() {
-    git -C "$GIT_DIR_ARG" -c core.fileMode=false --no-optional-locks "$@" 2>/dev/null
-}
+# git called straight from $(...) (not via a function) so bash execs it in the substitution's own fork
+GIT_OPTS=(-c core.fileMode=false --no-optional-locks)
 
-# One `git status --porcelain=v2 --branch` call gives branch, upstream sync and changes
+# One `git status --porcelain=v2 --branch` call gives branch, upstream sync and changes.
+# Sets REPLY to "branch<TAB>stash count<TAB>formatted info" (empty outside a repo)
 get_git_info() {
-    local GIT_DIR_ARG="$1"
     local porcelain
-    porcelain=$(_git status --porcelain=v2 --branch --show-stash) || return
+    REPLY=""
+    porcelain=$(git -C "$1" "${GIT_OPTS[@]}" status --porcelain=v2 --branch --show-stash 2>/dev/null) || return
 
     local branch="" has_upstream="" ahead=0 behind=0 status="" added=0 removed=0 stash=0
     local line xy
@@ -1721,36 +1727,39 @@ get_git_info() {
         fi
     fi
 
-    local git_info
-    git_info=$(printf "⎇  ${C_CYAN}%s${C_RESET}" "$branch")
-    [ -n "$status" ] && git_info+=$(printf " ${C_YELLOW}%s" "$status")
+    # Escapes stay literal (\033); the final printf %b renders them
+    local git_info="⎇  ${C_CYAN}${branch}${C_RESET}"
+    [ -n "$status" ] && git_info+=" ${C_YELLOW}${status}"
 
     if [ -n "$sync_indicator" ]; then
         git_info+=" "
         case "$sync_indicator" in
-            "=")    git_info+=$(printf "${C_GREEN}%s" "$sync_indicator") ;;
-            ↑*|↓*)  git_info+=$(printf "${C_YELLOW}%s" "$sync_indicator") ;;
-            ↕*)     git_info+=$(printf "${C_RED}%s" "$sync_indicator") ;;
+            "=")    git_info+="${C_GREEN}${sync_indicator}" ;;
+            ↑*|↓*)  git_info+="${C_YELLOW}${sync_indicator}" ;;
+            ↕*)     git_info+="${C_RED}${sync_indicator}" ;;
         esac
     fi
 
     if [ "$added" -gt 0 ] || [ "$removed" -gt 0 ]; then
         git_info+="  "
-        [ "$added" -gt 0 ] && git_info+=$(printf "${C_GREEN}+%s" "$added")
+        [ "$added" -gt 0 ] && git_info+="${C_GREEN}+${added}"
         [ "$added" -gt 0 ] && [ "$removed" -gt 0 ] && git_info+=" "
-        [ "$removed" -gt 0 ] && git_info+=$(printf "${C_RED}-%s" "$removed")
+        [ "$removed" -gt 0 ] && git_info+="${C_RED}-${removed}"
     fi
 
-    # "branch<TAB>stash count<TAB>formatted info"
-    printf '%s\t%s\t%s\n' "$branch" "$stash" "$git_info"
+    REPLY="${branch}"$'\t'"${stash}"$'\t'"${git_info}"
 }
 
+# Sets REPLY to "last commit age|✓ commits today". One `git log` replaces log -1 + rev-list --count.
+# shortcut: counts at most 100 commits today, raise -n if that ever shows up
 get_git_metrics() {
-    local GIT_DIR_ARG="$1"
     local current_time="$2"
 
-    local last_commit_epoch time_diff hours days minutes last_commit_time="" commits_today=""
-    last_commit_epoch=$(_git log -1 --format=%ct) || return
+    local log ct h m sec midnight count=0 last_commit_epoch time_diff hours days minutes
+    local last_commit_time="" commits_today=""
+    REPLY=""
+    log=$(git -C "$1" "${GIT_OPTS[@]}" log -n 100 --format=%ct 2>/dev/null) || return
+    last_commit_epoch=${log%%$'\n'*}
 
     if [ -n "$last_commit_epoch" ]; then
         time_diff=$((current_time - last_commit_epoch))
@@ -1770,12 +1779,16 @@ get_git_metrics() {
             fi
         fi
 
-        local commit_count
-        commit_count=$(_git rev-list --count --since=midnight HEAD)
-        [ "${commit_count:-0}" -gt 0 ] && commits_today="✓ ${commit_count}"
+        # Local midnight from the render clock
+        epoch_fmt "$current_time" "+%H %M %S"; read -r h m sec <<< "$REPLY"
+        midnight=$((current_time - 10#$h * 3600 - 10#$m * 60 - 10#$sec))
+        while IFS= read -r ct; do
+            [[ "$ct" =~ ^[0-9]+$ ]] && [ "$ct" -ge "$midnight" ] && count=$((count + 1))
+        done <<< "$log"
+        [ "$count" -gt 0 ] && commits_today="✓ ${count}"
     fi
 
-    echo "${last_commit_time}|${commits_today}"
+    REPLY="${last_commit_time}|${commits_today}"
 }
 
 # ============================================================================
@@ -1795,6 +1808,7 @@ init_session() {
     fi
 }
 
+# Sets REPLY
 format_duration() {
     local start_time="$1"
     local current_time="$2"
@@ -1804,17 +1818,17 @@ format_duration() {
     local remaining_minutes=$((duration_minutes % 60))
 
     if [ "$duration_hours" -ge 24 ]; then
-        echo "$((duration_hours / 24))d $((duration_hours % 24))h"
+        REPLY="$((duration_hours / 24))d $((duration_hours % 24))h"
     elif [ "$duration_hours" -gt 0 ]; then
         if [ "$remaining_minutes" -gt 0 ]; then
-            echo "${duration_hours}h ${remaining_minutes}m"
+            REPLY="${duration_hours}h ${remaining_minutes}m"
         else
-            echo "${duration_hours}h"
+            REPLY="${duration_hours}h"
         fi
     elif [ "$duration_minutes" -gt 0 ]; then
-        echo "${duration_minutes}m"
+        REPLY="${duration_minutes}m"
     else
-        echo "<1m"
+        REPLY="<1m"
     fi
 }
 
@@ -1822,11 +1836,12 @@ format_duration() {
 # CLAUDE USAGE (RATE LIMITS)
 # ============================================================================
 
-# Format a single rate-limit window (5h or 7d) into a colored segment.
-# Echoes nothing when the window is absent (non-subscribers / pre-first-response).
+# Format a single rate-limit window (5h or 7d) into a colored segment in REPLY.
+# Empty when the window is absent (non-subscribers / pre-first-response).
 # Projects the run-out time from the burn rate since the window started; ⚠ when it beats the reset.
 format_rate_window() {
     local label="$1" pct="$2" resets="$3" now="$4" window_secs="$5" eta_fmt="$6" alt_name="$7" alt_pct="$8"
+    REPLY=""
     [[ ! "$pct" =~ ^[0-9]+$ ]] && return
 
     local color seg eta=""
@@ -1836,7 +1851,7 @@ format_rate_window() {
         local elapsed=$((now - (resets - window_secs)))
         if [ "$pct" -ge 5 ] && [ "$pct" -lt 100 ] && [ "$elapsed" -ge $((window_secs / 30)) ]; then
             local runout=$((now + (100 - pct) * elapsed / pct))
-            [ "$runout" -lt "$resets" ] && eta=$(_epoch_to_fmt "$runout" "$eta_fmt")
+            [ "$runout" -lt "$resets" ] && { epoch_fmt "$runout" "$eta_fmt"; eta=$REPLY; }
         fi
     fi
 
@@ -1847,27 +1862,32 @@ format_rate_window() {
         # Same rule as the statusline suggestion: any healthy account for 7d, 20+ points freer for 5h
         [ -n "$alt_name" ] && { [ "$label" = "7d" ] || [ $((alt_pct + 20)) -le "$pct" ]; } && \
             why+=". Switch to @${alt_name} (${alt_pct}% of 5h)"
-        notify_once "quota-${label}-${resets}" "Claude ${label} limit" "${why}. Resets in $(format_duration "$now" "$resets")."
+        format_duration "$now" "$resets"
+        notify_once "quota-${label}-${resets}" "Claude ${label} limit" "${why}. Resets in ${REPLY}."
         seg="${C_ALERT}⚠ ${label}${C_RESET} "
     else
         seg="${label} "
     fi
-    seg+="$(make_bar "$pct" 5) ${color}${pct}%${C_RESET}"
-    [[ "$resets" =~ ^[0-9]+$ ]] && [ "$resets" -gt "$now" ] && seg+=" ${C_GRAY}($(format_duration "$now" "$resets"))${C_RESET}"
+    make_bar "$pct" 5; seg+="${REPLY} ${color}${pct}%${C_RESET}"
+    if [[ "$resets" =~ ^[0-9]+$ ]] && [ "$resets" -gt "$now" ]; then
+        format_duration "$now" "$resets"; seg+=" ${C_GRAY}(${REPLY})${C_RESET}"
+    fi
     [ -n "$eta" ] && seg+=" ${C_ALERT}→ full ~${eta}${C_RESET}"
 
-    printf '%s' "$seg"
+    REPLY=$seg
 }
 
 # Claude plan from the OAuth account in ~/.claude.json, e.g. "Team 5x", "Max 20x", "Pro".
 # Cached in STATE_DIR and refreshed only when the account file changes.
 # "account<TAB>plan" for the active account (CLAUDE_CONFIG_DIR, else ~/.claude.json), e.g.
 # "naira<TAB>Team 5x"; account is the email's local part. Cached until the account file changes.
+# Sets REPLY.
 get_account_info() {
     local account_file="${CLAUDE_CONFIG_DIR:+${CLAUDE_CONFIG_DIR}/}.claude.json" cache_file
     [ -n "$CLAUDE_CONFIG_DIR" ] || account_file="${HOME}/.claude.json"
+    REPLY=""
     [ -f "$account_file" ] || return
-    cache_file="${STATE_DIR}/account-$(printf '%s' "$account_file" | cksum | cut -d' ' -f1)"
+    cache_key "$account_file"; cache_file="${STATE_DIR}/account-${REPLY}"
     if [ ! -f "$cache_file" ] || [ "$account_file" -nt "$cache_file" ]; then
         jq -r '
             .oauthAccount // {} |
@@ -1876,13 +1896,19 @@ get_account_info() {
             [(.emailAddress // "" | split("@")[0]), ([$plan, $mult] | map(select(. != "")) | join(" "))] | @tsv
         ' "$account_file" > "$cache_file" 2>/dev/null
     fi
-    cat "$cache_file" 2>/dev/null
+    slurp "$cache_file"
 }
 
-# Stable per-account color so terminals on different accounts are told apart at a glance
+# Stable per-account color so terminals on different accounts are told apart at a glance.
+# Sets REPLY; djb2 over the name's code points (no cksum fork)
 account_color() {
     local -a colors=("$C_CYAN" "$C_PURPLE" "$C_GREEN" "$C_YELLOW" "$C_BLUE")
-    printf '%s' "${colors[$(( $(printf '%s' "$1" | cksum | cut -d' ' -f1) % 5 ))]}"
+    local i c h=5381
+    for ((i = 0; i < ${#1}; i++)); do
+        printf -v c '%d' "'${1:i:1}"
+        h=$(( (h * 33 + c) % 1000003 ))
+    done
+    REPLY=${colors[$((h % 5))]}
 }
 
 # Each account records its last-seen limits ("5h% 5h_reset 7d% 7d_reset") so any session can
@@ -1893,9 +1919,10 @@ record_account_quota() {
     printf '%s %s %s %s\n' "$2" "${3:-0}" "${4:-0}" "${5:-0}" > "$dir/quota-$1.tsv"
 }
 
-# Prints "account 5h%" of the other account with the most 5h headroom (7d ≥90% excluded)
+# Sets REPLY to "account 5h%" of the other account with the most 5h headroom (7d ≥90% excluded)
 suggest_account() {
     local me=$1 now=$2 f name p5 r5 p7 r7 best="" best_p=101
+    REPLY=""
     for f in "${HOME}/.cache/claude-statusline"/quota-*.tsv; do
         [ -f "$f" ] || continue
         name=${f##*/quota-}; name=${name%.tsv}
@@ -1907,30 +1934,33 @@ suggest_account() {
         [ "$p7" -ge 90 ] && continue
         [ "$p5" -lt "$best_p" ] && { best_p=$p5; best=$name; }
     done
-    [ -n "$best" ] && printf '%s %s' "$best" "$best_p"
+    [ -n "$best" ] && REPLY="$best $best_p"
 }
 
 # Honcho memory activity for this session, written by locally patched Honcho hooks to
 # ~/.honcho/status-<session_id>.json: ←recalled conclusions (last prompt) ↑captured tool events ✓saved messages
+# Sets REPLY. The status file is a flat object of integers, so a regex replaces jq.
 format_honcho_status() {
-    local status_file="${HOME}/.honcho/status-${1}.json"
-    [ -n "$1" ] && [ -f "$status_file" ] || return
-    local recalled captured saved seg="🧠"
-    { read -r recalled; read -r captured; read -r saved; } < <(
-        jq -r '(.recalled // ""), (.captured // ""), (.saved // "")' "$status_file" 2>/dev/null)
-    [[ "$recalled" =~ ^[0-9]+$ ]] && seg+=" ${C_PURPLE}←${recalled}${C_RESET}"
-    [[ "$captured" =~ ^[0-9]+$ ]] && seg+=" ${C_GRAY}↑${captured}${C_RESET}"
-    [[ "$saved" =~ ^[0-9]+$ ]] && seg+=" ${C_GRAY}✓${saved}${C_RESET}"
-    [ "$seg" != "🧠" ] && printf '%s' "$seg"
+    local status_file="${HOME}/.honcho/status-${1}.json" json seg="🧠"
+    REPLY=""
+    [ -n "$1" ] && slurp "$status_file" || return
+    json=$REPLY
+    [[ "$json" =~ \"recalled\":[[:space:]]*([0-9]+) ]] && seg+=" ${C_PURPLE}←${BASH_REMATCH[1]}${C_RESET}"
+    [[ "$json" =~ \"captured\":[[:space:]]*([0-9]+) ]] && seg+=" ${C_GRAY}↑${BASH_REMATCH[1]}${C_RESET}"
+    [[ "$json" =~ \"saved\":[[:space:]]*([0-9]+) ]] && seg+=" ${C_GRAY}✓${BASH_REMATCH[1]}${C_RESET}"
+    REPLY=""
+    [ "$seg" != "🧠" ] && REPLY=$seg
 }
 
 # Prompt cache: hit ratio plus time until the cache goes cold (an idle-cost warning)
+# Sets REPLY
 format_prompt_cache() {
     local hit_pct="$1" expires_at="$2" warm="$3" now="$4"
+    REPLY=""
     [ -z "$hit_pct" ] && [ -z "$warm" ] && return
 
     if [ "$warm" = "false" ] || { [[ "$expires_at" =~ ^[0-9]+$ ]] && [ "$expires_at" -le "$now" ]; }; then
-        printf '%s' "${C_GRAY}cache${C_RESET} ${C_YELLOW}cold${C_RESET}"
+        REPLY="${C_GRAY}cache${C_RESET} ${C_YELLOW}cold${C_RESET}"
         return
     fi
 
@@ -1949,10 +1979,11 @@ format_prompt_cache() {
     if [[ "$expires_at" =~ ^[0-9]+$ ]]; then
         local left=$((expires_at - now)) left_color="${C_GRAY}"
         [ "$left" -le 300 ] && left_color="${C_YELLOW}"
-        seg+=" ${left_color}($(format_duration "$now" "$expires_at"))${C_RESET}"
+        format_duration "$now" "$expires_at"
+        seg+=" ${left_color}(${REPLY})${C_RESET}"
     fi
 
-    printf '%s' "$seg"
+    REPLY=$seg
 }
 
 # ============================================================================
@@ -1960,13 +1991,6 @@ format_prompt_cache() {
 # ============================================================================
 
 main() {
-    # Load configuration
-    load_config
-
-    # Read input
-    local input
-    input=$(cat)
-
     # Parse all input fields in one jq call; order must match the read list below
     local current_dir model_raw model_id model total_input total_output context_size session_id
     local json_cost lines_added lines_removed
@@ -1990,7 +2014,7 @@ main() {
         IFS= read -r cache_warm; IFS= read -r fast_mode; IFS= read -r thinking_on; IFS= read -r session_name
         IFS= read -r api_duration
         IFS= read -r five_pct; IFS= read -r five_resets; IFS= read -r seven_pct; IFS= read -r seven_resets
-    } < <(printf '%s' "$input" | jq -Rrs '
+    } < <(jq -Rrs '
         (fromjson? // {}) as $in | $in |
         def v(p; d): ((p // d) | tostring);
         v(.workspace.current_dir; ""), v(.model.display_name; ""), v(.model.id; ""),
@@ -2013,7 +2037,15 @@ main() {
         v(.rate_limits.five_hour.used_percentage | numbers | floor; ""), v(.rate_limits.five_hour.resets_at | numbers | floor; ""),
         v(.rate_limits.seven_day.used_percentage | numbers | floor; ""), v(.rate_limits.seven_day.resets_at | numbers | floor; "")
     ' 2>/dev/null)
-    model=$(format_model_name "$model_raw")
+    # format_model_name is a long echo chain; cache its answer per name instead of forking each render
+    local model_cache
+    cache_key "$model_raw"; model_cache="${STATE_DIR}/model-${REPLY}"
+    if slurp "$model_cache"; then
+        model=$REPLY
+    else
+        model=$(format_model_name "$model_raw")
+        printf '%s\n' "$model" > "$model_cache"
+    fi
     : "${mcp_servers_count:=0}" "${tools_count:=0}"
 
     # Ensure numeric values are valid
@@ -2035,18 +2067,18 @@ main() {
     local message_count_file="${STATE_DIR}/messages-${session_id}"
 
     local session_start current_time duration
-    session_start=$(cat "$session_file")
+    slurp "$session_file"; session_start=$REPLY
     current_time=$NOW
-    duration=$(format_duration "$session_start" "$current_time")
+    format_duration "$session_start" "$current_time"; duration=$REPLY
 
 
     # Message count tracking
     local prev_total current_total message_count
-    prev_total=$(cat "$session_metrics" 2>/dev/null || echo "0")
+    slurp "$session_metrics"; prev_total=${REPLY:-0}
     current_total=$((total_input + total_output))
 
     # Always read current message count
-    message_count=$(cat "$message_count_file" 2>/dev/null || echo "0")
+    slurp "$message_count_file"; message_count=${REPLY:-0}
 
     # Increment if tokens increased (including first real message after init)
     local new_message=""
@@ -2069,14 +2101,15 @@ main() {
 
     local tool_calls_count files_edited_count bash_commands_count
 
-    tool_calls_count=${json_tool_calls:-$(cat "$stats_tool_calls_file" 2>/dev/null || echo "0")}
-    files_edited_count=${json_files_edited:-$(cat "$stats_files_file" 2>/dev/null || echo "0")}
-    bash_commands_count=${json_bash_commands:-$(cat "$stats_bash_file" 2>/dev/null || echo "0")}
+    tool_calls_count=$json_tool_calls files_edited_count=$json_files_edited bash_commands_count=$json_bash_commands
+    [ -n "$tool_calls_count" ] || { slurp "$stats_tool_calls_file"; tool_calls_count=${REPLY:-0}; }
+    [ -n "$files_edited_count" ] || { slurp "$stats_files_file"; files_edited_count=${REPLY:-0}; }
+    [ -n "$bash_commands_count" ] || { slurp "$stats_bash_file"; bash_commands_count=${REPLY:-0}; }
 
     # Detect environment (returns "pkg_manager|language" format)
     local dev_env_result="" package_manager="" prog_lang=""
     if [ "$SHOW_DEV" = "true" ] && { [ "$SHOW_LANGUAGE" = "true" ] || [ "$SHOW_PACKAGE_MANAGER" = "true" ]; }; then
-        dev_env_result=$(detect_dev_environment "$current_dir")
+        detect_dev_environment "$current_dir"; dev_env_result=$REPLY
         [ "$SHOW_PACKAGE_MANAGER" = "true" ] && package_manager=${dev_env_result%%|*}
         [ "$SHOW_LANGUAGE" = "true" ] && prog_lang=${dev_env_result#*|}
     fi
@@ -2084,49 +2117,43 @@ main() {
     # Detect servers
     local running_servers=""
     # netstat + lsof per port is slow; a minute-old answer is fine for "is my dev server up"
-    [ "$SHOW_DEV" = "true" ] && [ "$SHOW_SERVERS" = "true" ] && \
-        running_servers=$(bg_cached "servers-$(id -u)" detect_running_servers)
+    if [ "$SHOW_DEV" = "true" ] && [ "$SHOW_SERVERS" = "true" ]; then
+        bg_cached "servers-${UID}" detect_running_servers; running_servers=$REPLY
+    fi
 
     # Count configs (MCP, Rules, Hooks)
     local claude_md_count=0 rules_count=0 hooks_count_new=0
-    [ "$SHOW_CLAUDE_MD" = "true" ] && claude_md_count=$(count_claude_md_files "$current_dir")
-    [ "$SHOW_RULES" = "true" ] && rules_count=$(count_rules "$current_dir")
-    [ "$SHOW_HOOKS" = "true" ] && hooks_count_new=$(count_hooks "$current_dir")
-    [ "$mcp_servers_count" -eq 0 ] && mcp_servers_count=$(count_mcp_servers "$current_dir")
+    [ "$SHOW_CLAUDE_MD" = "true" ] && { count_claude_md_files "$current_dir"; claude_md_count=$REPLY; }
+    [ "$SHOW_RULES" = "true" ] && { count_rules "$current_dir"; rules_count=$REPLY; }
+    if [ "$SHOW_HOOKS" = "true" ] || [ "$mcp_servers_count" -eq 0 ]; then
+        count_config "$current_dir"
+        [ "$SHOW_HOOKS" = "true" ] && hooks_count_new=$CFG_HOOKS
+        [ "$mcp_servers_count" -eq 0 ] && mcp_servers_count=$CFG_MCP
+    fi
 
     # Parse transcript for tools, agents, todos
-    local transcript_result_file
-    transcript_result_file="${STATE_DIR}/transcript-result-${session_id}"
+    local transcript_result_file="${STATE_DIR}/transcript-lines-${session_id}"
 
-    # One jq call: fixed fields first, then one "name<TAB>count" line per top completed tool
-    local running_tools_count=0 tool_name tool_input tool_timestamp
-    local running_agents_count=0 agent_type agent_model agent_desc agent_timestamp
+    # Fixed fields first, then one "name<TAB>count" line per top completed tool
+    local running_tools_count=0 tool_name tool_target tool_started
+    local running_agents_count=0 agent_type agent_model agent_desc agent_started
     local todos_count=0 completed_count=0 active_todo completed_tools_output="" tname tcount
     if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
         parse_transcript "$transcript_path" "$transcript_result_file"
         [ -f "$transcript_result_file" ] && {
-            IFS= read -r running_tools_count; IFS= read -r tool_name; IFS= read -r tool_input; IFS= read -r tool_timestamp
+            IFS= read -r running_tools_count; IFS= read -r tool_name; IFS= read -r tool_target; IFS= read -r tool_started
             IFS= read -r running_agents_count; IFS= read -r agent_type; IFS= read -r agent_model
-            IFS= read -r agent_desc; IFS= read -r agent_timestamp
+            IFS= read -r agent_desc; IFS= read -r agent_started
             IFS= read -r todos_count; IFS= read -r completed_count; IFS= read -r active_todo
             while IFS=$'\t' read -r tname tcount; do
                 if [ "$tname" = "+" ]; then
                     completed_tools_output+="${C_GRAY}+${tcount}${C_RESET} "
                 elif [ -n "$tname" ]; then
-                    completed_tools_output+="✓ $(short_tool_name "$tname") ×${tcount} "
+                    short_tool_name "$tname"
+                    completed_tools_output+="✓ ${REPLY} ×${tcount} "
                 fi
             done
-        } < <(jq -r '
-            def s: tostring | gsub("[\n\t]"; " ");
-            (.running_tools // []) as $t | (.running_agents // []) as $a
-            | (.todos // []) as $d | (.completed_counts // []) as $c
-            | ($t | length), ($t[0].name // "" | s), ($t[0].input // {} | tojson), ($t[0].timestamp // ""),
-              ($a | length), ($a[0].input.subagent_type // "unknown" | s), ($a[0].input.model // "" | s),
-              ($a[0].input.description // "" | s), ($a[0].timestamp // ""),
-              ($d | length), ([$d[] | select(.status == "completed")] | length),
-              ([$d[] | select(.status == "in_progress")][0] // {} | .activeForm // .content // "" | s),
-              ($c[:3][] | "\(.name)\t\(.count)"), (if ($c | length) > 3 then "+\t\(($c | length) - 3)" else empty end)
-        ' "$transcript_result_file" 2>/dev/null)
+        } < "$transcript_result_file"
     fi
     [[ "$running_tools_count" =~ ^[0-9]+$ ]] || running_tools_count=0
     [[ "$running_agents_count" =~ ^[0-9]+$ ]] || running_agents_count=0
@@ -2176,33 +2203,37 @@ main() {
     # Git info
     local git_info git_metrics last_commit_time commits_today branch="" stash_count=0 git_out
     # Separate capture: bash 3.2 applies a `IFS=... read <<< "$(cmd)"` IFS inside cmd too
-    [ "$SHOW_GIT" = "true" ] && git_out=$(get_git_info "$current_dir")
+    if [ "$SHOW_GIT" = "true" ]; then
+        get_git_info "$current_dir"; git_out=$REPLY
+    fi
     IFS=$'\t' read -r branch stash_count git_info <<< "$git_out"
-    [ -n "$git_out" ] && git_metrics=$(get_git_metrics "$current_dir" "$current_time")
-    last_commit_time=$(echo "$git_metrics" | cut -d'|' -f1)
-    commits_today=$(echo "$git_metrics" | cut -d'|' -f2)
+    if [ -n "$git_out" ]; then
+        get_git_metrics "$current_dir" "$current_time"; git_metrics=$REPLY
+    fi
+    last_commit_time=${git_metrics%%|*}
+    commits_today=${git_metrics#*|}
 
-    # Directory name
-    local dir
-    dir=$(basename "$current_dir")
+    # Directory name (either slash: Windows paths arrive with backslashes)
+    local dir=$current_dir
+    while [[ "$dir" == ?*[/\\] ]]; do dir=${dir%?}; done
+    dir=${dir##*[/\\]}
 
     # Subscription info
     local subscription_info provider_section
-    subscription_info=$(get_subscription_info "$provider_name")
+    get_subscription_info "$provider_name"; subscription_info=$REPLY
     local provider_label="$provider_name" plan_label="" account_name=""
-    [ "$provider_name" = "Claude" ] && IFS=$'\t' read -r account_name plan_label <<< "$(get_account_info)"
+    if [ "$provider_name" = "Claude" ]; then
+        get_account_info; IFS=$'\t' read -r account_name plan_label <<< "$REPLY"
+    fi
     [ -n "$plan_label" ] && provider_label+=" ${plan_label}"
     record_account_quota "$account_name" "$five_pct" "$five_resets" "$seven_pct" "$seven_resets"
-    if [ -n "$subscription_info" ]; then
-        provider_section=$(printf "${C_CYAN}%s${C_RESET} %s" "$provider_label" "$subscription_info")
-    else
-        provider_section=$(printf "${C_CYAN}%s${C_RESET}" "$provider_label")
-    fi
+    provider_section="${C_CYAN}${provider_label}${C_RESET}"
+    [ -n "$subscription_info" ] && provider_section+=" ${subscription_info}"
 
     # Determine cost display (integer cents avoids bc for the thresholds)
     local final_cost_display final_cost_color cost_cents
     # shellcheck disable=SC2016  # literal dollar sign
-    final_cost_display=$(printf '$%.2f' "${session_cost:-0}" 2>/dev/null) || final_cost_display='$0.00'
+    printf -v final_cost_display '$%.2f' "${session_cost:-0}" 2>/dev/null || final_cost_display='$0.00'
     cost_cents=${final_cost_display//[^0-9]/}
     cost_cents=$((10#${cost_cents:-0}))
     if [ "$cost_cents" -ge 100 ]; then
@@ -2217,7 +2248,7 @@ main() {
     local burn_rate=""
     if [[ "$api_duration" =~ ^[0-9]+$ ]] && [ "$api_duration" -ge 60000 ] && [ "$cost_cents" -gt 0 ]; then
         local cph=$((cost_cents * 3600000 / api_duration))
-        burn_rate="$(fmt_cents "$cph")/h"
+        fmt_cents "$cph"; burn_rate="${REPLY}/h"
     fi
 
     # Per-message history ("ctx% cost_cents") for sparklines: context trend and cost per message
@@ -2230,12 +2261,12 @@ main() {
             END { s = NR > 12 ? 2 : 1
                   for (i = s; i <= NR; i++) printf "%s ", c[i]; print ""
                   for (i = (s > 1 ? s : 2); i <= NR; i++) printf "%d ", d[i] - d[i-1]; print "" }')
-        ctx_spark=$(sparkline "$ctx_hist" 100)
-        cost_spark=$(sparkline "$cost_hist")
+        sparkline "$ctx_hist" 100; ctx_spark=$REPLY
+        sparkline "$cost_hist"; cost_spark=$REPLY
     fi
 
     local spend_today=0 spend_week=0
-    read -r spend_today spend_week <<< "$(cost_ledger "$session_id" "$cost_cents")"
+    cost_ledger "$session_id" "$cost_cents"; read -r spend_today spend_week <<< "$REPLY"
 
     # ========================================================================
     # OUTPUT GENERATION (Ultra compact 2-line layout with ┊ separators)
@@ -2265,8 +2296,9 @@ main() {
 
     # Account badge only once more than one account has reported limits
     local -a known_accounts=("${HOME}/.cache/claude-statusline"/quota-*.tsv)
-    [ -n "$account_name" ] && [ ${#known_accounts[@]} -gt 1 ] && \
-        l1="$(account_color "$account_name")@${account_name}${C_RESET} ${l1}"
+    if [ -n "$account_name" ] && [ ${#known_accounts[@]} -gt 1 ]; then
+        account_color "$account_name"; l1="${REPLY}@${account_name}${C_RESET} ${l1}"
+    fi
 
     # Segments: "prio<TAB>separator<TAB>text"; fit_line drops high prio first on narrow terminals
     local T=$'\t' D=" · "
@@ -2276,10 +2308,12 @@ main() {
         s1+=("2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
         [ -n "$cost_spark" ] && s1+=("7${T} ${T}${final_cost_color}${cost_spark}${C_RESET}")
         [ -n "$burn_rate" ] && s1+=("6${T} ${T}${C_GRAY}${burn_rate}${C_RESET}")
-        [[ "$spend_today" =~ ^[0-9]+$ ]] && [ "$spend_today" -gt "$cost_cents" ] &&
-            s1+=("5${T}${D}${T}${C_GRAY}today${C_RESET} ${C_YELLOW}$(fmt_cents "$spend_today")${C_RESET}")
-        [[ "$spend_week" =~ ^[0-9]+$ ]] && [ "$spend_week" -gt "$spend_today" ] &&
-            s1+=("8${T} ${T}${C_GRAY}wk $(fmt_cents "$spend_week")${C_RESET}")
+        if [[ "$spend_today" =~ ^[0-9]+$ ]] && [ "$spend_today" -gt "$cost_cents" ]; then
+            fmt_cents "$spend_today"; s1+=("5${T}${D}${T}${C_GRAY}today${C_RESET} ${C_YELLOW}${REPLY}${C_RESET}")
+        fi
+        if [[ "$spend_week" =~ ^[0-9]+$ ]] && [ "$spend_week" -gt "$spend_today" ]; then
+            fmt_cents "$spend_week"; s1+=("8${T} ${T}${C_GRAY}wk ${REPLY}${C_RESET}")
+        fi
     fi
     s1+=("9${T}${D}${T}${C_GRAY}${duration}${C_RESET}")
     [ "$SHOW_MESSAGE_COUNT" = "true" ] && s1+=("7${T}${D}${T}${C_CYAN}${message_count} msg${C_RESET}")
@@ -2289,8 +2323,12 @@ main() {
         [ "$context_usage_pct" -ge 85 ] && ctx_label="${C_ALERT}⚠ ctx${C_RESET} "
         [ "$context_usage_pct" -ge 90 ] && notify_once "ctx-${session_id}" "Claude context ${context_usage_pct}%" \
             "${session_name:-$dir}: context almost full, auto-compact is near."
-        s1+=("1${T}${SEP}${T}${ctx_label}$(make_bar "$context_usage_pct") ${context_usage_color}${context_usage_pct}%${C_RESET}")
-        s1+=("5${T} ${T}${C_GRAY}($(format_k "$current_total_tokens")/$(format_k "$context_size"))${C_RESET}")
+        make_bar "$context_usage_pct"
+        s1+=("1${T}${SEP}${T}${ctx_label}${REPLY} ${context_usage_color}${context_usage_pct}%${C_RESET}")
+        local k_used
+        format_k "$current_total_tokens"; k_used=$REPLY
+        format_k "$context_size"
+        s1+=("5${T} ${T}${C_GRAY}(${k_used}/${REPLY})${C_RESET}")
         [ -n "$ctx_spark" ] && s1+=("6${T} ${T}${C_GRAY}${ctx_spark}${C_RESET}")
         if [ -n "$msgs_left" ]; then
             local left_color="${C_GRAY}"
@@ -2300,14 +2338,17 @@ main() {
     fi
 
     local cache_section=""
-    [ "$SHOW_CACHE_EFFICIENCY" = "true" ] && \
-        cache_section=$(format_prompt_cache "$cache_hit_pct" "$cache_expires_at" "$cache_warm" "$current_time")
+    if [ "$SHOW_CACHE_EFFICIENCY" = "true" ]; then
+        format_prompt_cache "$cache_hit_pct" "$cache_expires_at" "$cache_warm" "$current_time"; cache_section=$REPLY
+    fi
     [ -n "$cache_section" ] && s1+=("4${T}${SEP}${T}${cache_section}")
     if [ "$SHOW_RATE_LIMIT" = "true" ]; then
         local five seven alt_name="" alt_pct=""
-        [ -n "$account_name" ] && read -r alt_name alt_pct <<< "$(suggest_account "$account_name" "$current_time")"
-        five=$(format_rate_window "5h" "$five_pct" "$five_resets" "$current_time" 18000 "+%H:%M" "$alt_name" "$alt_pct")
-        seven=$(format_rate_window "7d" "$seven_pct" "$seven_resets" "$current_time" 604800 "+%a %H:%M" "$alt_name" "$alt_pct")
+        if [ -n "$account_name" ]; then
+            suggest_account "$account_name" "$current_time"; read -r alt_name alt_pct <<< "$REPLY"
+        fi
+        format_rate_window "5h" "$five_pct" "$five_resets" "$current_time" 18000 "+%H:%M" "$alt_name" "$alt_pct"; five=$REPLY
+        format_rate_window "7d" "$seven_pct" "$seven_resets" "$current_time" 604800 "+%a %H:%M" "$alt_name" "$alt_pct"; seven=$REPLY
         [ -n "$five" ] && s1+=("2${T}${SEP}${T}${C_GRAY}◴${C_RESET} ${five}")
         if [ -n "$seven" ]; then
             if [ -n "$five" ]; then s1+=("3${T}${D}${T}${seven}")
@@ -2318,7 +2359,7 @@ main() {
         # (for a 5h squeeze it must be at least 20 points lower to be worth switching)
         if [ -n "$alt_name" ] && { [ "${five_pct:-0}" -ge 80 ] || [ "${seven_pct:-0}" -ge 90 ] || [[ "$five" == *"→ full"* ]]; }; then
             { [ "${seven_pct:-0}" -ge 90 ] || [ $((alt_pct + 20)) -le "${five_pct:-0}" ]; } && \
-                s1+=("1${T} ${T}${C_GRAY}⇄${C_RESET} $(account_color "$alt_name")@${alt_name}${C_RESET} ${C_GRAY}${alt_pct}%${C_RESET}")
+                { account_color "$alt_name"; s1+=("1${T} ${T}${C_GRAY}⇄${C_RESET} ${REPLY}@${alt_name}${C_RESET} ${C_GRAY}${alt_pct}%${C_RESET}"); }
         fi
     fi
 
@@ -2326,7 +2367,8 @@ main() {
     local line_width=999
     [[ "$COLUMNS" =~ ^[0-9]+$ ]] && line_width=$((COLUMNS - 6))
     # zen: one line of essentials (prio ≤3) plus alerts; compact: first two lines
-    local mode="${STATUSLINE_MODE:-$(cat "${HOME}/.cache/claude-statusline/mode" 2>/dev/null)}"
+    local mode=$STATUSLINE_MODE
+    [ -n "$mode" ] || { slurp "${HOME}/.cache/claude-statusline/mode"; mode=$REPLY; }
     if [ "$mode" = "zen" ]; then
         local -a zen_segs=()
         local seg
@@ -2335,7 +2377,7 @@ main() {
         done
         s1=("${zen_segs[@]}")
     fi
-    l1=$(fit_line "$line_width" "${s1[@]}")
+    fit_line "$line_width" "${s1[@]}"; l1=$REPLY
     out_lines+=("$l1")
 
     # --- Line 2: Git/folder + changes  ┊  Stats  ┊  Dev + Config ---
@@ -2351,7 +2393,7 @@ main() {
         s2+=("0${T}${SEP}${T}${dir} ${git_info}${C_RESET}")
 
         local pr_num pr_checks pr_review
-        IFS=$'\t' read -r pr_num pr_checks pr_review <<< "$(get_pr_status "$current_dir" "$branch")"
+        get_pr_status "$current_dir" "$branch"; IFS=$'\t' read -r pr_num pr_checks pr_review <<< "$REPLY"
         if [[ "$pr_num" =~ ^[0-9]+$ ]]; then
             local pr_seg="PR #${pr_num}"
             case "$pr_checks" in
@@ -2391,7 +2433,9 @@ main() {
     [ "$tool_calls_count" -gt 0 ] && stats_parts+=("⚙ $tool_calls_count")
     [ "$files_edited_count" -gt 0 ] && stats_parts+=("✎ $files_edited_count")
     [ "$bash_commands_count" -gt 0 ] && stats_parts+=("⚡ $bash_commands_count")
-    [ ${#stats_parts[@]} -gt 0 ] && stats_sec="${C_GRAY}$(IFS=' '; echo "${stats_parts[*]}")${C_RESET}"
+    if [ ${#stats_parts[@]} -gt 0 ]; then
+        local IFS=' '; stats_sec="${C_GRAY}${stats_parts[*]}${C_RESET}"; unset IFS
+    fi
 
     # Section 3: Dev + Config
     local dev_cfg=""
@@ -2405,7 +2449,7 @@ main() {
         dev_cfg+="${C_GREEN}${running_servers}${C_RESET}"
     fi
     local docker_count=""
-    [ "$SHOW_DOCKER" = "true" ] && docker_count=$(get_docker_count)
+    [ "$SHOW_DOCKER" = "true" ] && { get_docker_count; docker_count=$REPLY; }
     if [ -n "$docker_count" ]; then
         [ -n "$dev_cfg" ] && dev_cfg+=" · "
         dev_cfg+="${C_BLUE}🐳 ${docker_count}${C_RESET}"
@@ -2417,31 +2461,29 @@ main() {
     [ "$SHOW_MCP_SERVERS" = "true" ] && [ "$mcp_servers_count" -gt 0 ] && config_parts+=("🔌 ${mcp_servers_count}")
     [ "$SHOW_HOOKS" = "true" ] && [ "$hooks_count_new" -gt 0 ] && config_parts+=("⚓ ${hooks_count_new}")
     local honcho_section
-    honcho_section=$(format_honcho_status "$session_id")
+    format_honcho_status "$session_id"; honcho_section=$REPLY
     [ -n "$honcho_section" ] && config_parts+=("$honcho_section")
     if [ ${#config_parts[@]} -gt 0 ]; then
         [ -n "$dev_cfg" ] && dev_cfg+=" · "
-        dev_cfg+="$(IFS=' '; echo "${config_parts[*]}")"
+        local IFS=' '; dev_cfg+="${config_parts[*]}"; unset IFS
     fi
 
     # Append sections with ┊ separators
     [ "$SHOW_TOOLS" = "true" ] && [ -n "$stats_sec" ] && s2+=("9${T}${SEP}${T}${stats_sec}")
     [ -n "$dev_cfg" ] && s2+=("4${T}${SEP}${T}${dev_cfg}")
 
-    out_lines+=("$(fit_line "$line_width" "${s2[@]}")")
+    fit_line "$line_width" "${s2[@]}"; out_lines+=("$REPLY")
 
     # --- Dynamic lines: Tools, Agents, Todos (only when active) ---
     if [ "$SHOW_RUNNING_TOOLS" = "true" ] && { [ "$running_tools_count" -gt 0 ] || [ -n "$completed_tools_output" ]; }; then
         local lt=""
-        local spinner
-        spinner=$(get_spinner_frame)
+        local spinner=${SPINNER_FRAMES[$((NOW % 4))]}
 
         if [ "$running_tools_count" -gt 0 ]; then
-            local tool_target elapsed
-            tool_target=$(format_tool_target "$tool_name" "$tool_input")
-            [ -n "$tool_timestamp" ] && elapsed=$(format_elapsed_time "$tool_timestamp" "$current_time")
-
-            lt+="${C_YELLOW}${spinner}${C_RESET} $(short_tool_name "$tool_name")"
+            local elapsed
+            format_elapsed_time "$tool_started" "$current_time"; elapsed=$REPLY
+            short_tool_name "$tool_name"
+            lt+="${C_YELLOW}${spinner}${C_RESET} ${REPLY}"
             [ -n "$tool_target" ] && lt+=": ${C_CYAN}${tool_target}${C_RESET}"
             [ -n "$elapsed" ] && lt+=" ${C_GRAY}(${elapsed})${C_RESET}"
             [ "$running_tools_count" -gt 1 ] && lt+=" ${C_GRAY}+$((running_tools_count - 1)) more${C_RESET}"
@@ -2456,11 +2498,10 @@ main() {
     fi
 
     if [ "$SHOW_AGENTS" = "true" ] && [ "$running_agents_count" -gt 0 ]; then
-        local la="" spinner
-        spinner=$(get_spinner_frame)
+        local la="" spinner=${SPINNER_FRAMES[$((NOW % 4))]}
 
         local elapsed
-        [ -n "$agent_timestamp" ] && elapsed=$(format_elapsed_time "$agent_timestamp" "$current_time")
+        format_elapsed_time "$agent_started" "$current_time"; elapsed=$REPLY
 
         la+="${C_YELLOW}${spinner}${C_RESET} ${C_PURPLE}${agent_type}${C_RESET}"
         [ -n "$agent_model" ] && la+=" [${C_CYAN}${agent_model}${C_RESET}]"
