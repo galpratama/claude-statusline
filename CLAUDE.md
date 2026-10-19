@@ -39,6 +39,7 @@ Render path is fork-free where possible (a fork costs ~25ms in Git Bash on Windo
 - `bg_cached` - background-refreshed command cache (PR via `_fetch_pr`, docker), freshness stamp in `<cache>.at`; `fresh_cache`/`stamp_cache` - "epoch\nvalue" caches (`ver-*` tool versions, `sub-*` subscription); `notify_once` - osascript notification keyed by a flag in `$STATE_DIR/notified-*`
 - Mode (`zen`/`compact`/`full`): `STATUSLINE_MODE` or `~/.cache/claude-statusline/mode`, set with `--mode`
 - `calculate_cost` - only used when the input has no `.cost.total_cost_usd`
+- Currency: `display.currency: "idr"` sets `RATE_IDR` (USD→IDR ×100) from `usd_idr_rate` (`~/.cache/claude-statusline/usd-idr`, hourly background `_fetch_usd_idr`); `fmt_cents`/`fmt_idr` format. Rate 0 (no cache yet) = USD
 - Memory pressure: macOS only, one `sysctl kern.memorystatus_vm_pressure_level` per render, `⚠ RAM` at warn (2) / critical (4); `features.memory_pressure: false` turns it off (tests do)
 
 ### Input fields used

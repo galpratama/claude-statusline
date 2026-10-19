@@ -1,0 +1,13 @@
+{
+  "session_id": "t-minimal",
+  "workspace": {
+    "current_dir": "__WORK__"
+  },
+  "model": {
+    "display_name": "Sonnet 5.5"
+  },
+  "cost": {
+    "total_cost_usd": 12.3456,
+    "total_api_duration_ms": 600000
+  }
+}

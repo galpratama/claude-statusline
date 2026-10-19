@@ -147,7 +147,7 @@ load_config() {
         v(.segments.ai.show_claude_md; "true"), v(.segments.tools.enabled; "true"),
         v(.segments.agents.enabled; "true"), v(.segments.todos.enabled; "true"),
         v(.features.notifications; "true"), v(.segments.dev.show_docker; "true"), v(.segments.git.show_stash; "true"),
-        v(.display.theme; "default"), v(.features.memory_pressure; "true")
+        v(.display.theme; "default"), v(.features.memory_pressure; "true"), v(.display.currency; "usd")
     ' "$CONFIG_FILE" 2>/dev/null); then
         {
             read -r SHOW_PROVIDER; read -r SHOW_MODEL
@@ -163,7 +163,7 @@ load_config() {
             read -r SHOW_CLAUDE_MD; read -r SHOW_RUNNING_TOOLS
             read -r SHOW_AGENTS; read -r SHOW_TODOS
             read -r NOTIFICATIONS; read -r SHOW_DOCKER; read -r SHOW_STASH
-            read -r DISPLAY_THEME; read -r SHOW_MEM_PRESSURE
+            read -r DISPLAY_THEME; read -r SHOW_MEM_PRESSURE; read -r CURRENCY
         } <<< "$config_values"
     else
         # Defaults when no config file
@@ -196,6 +196,7 @@ load_config() {
         SHOW_DOCKER="true"
         SHOW_STASH="true"
         SHOW_MEM_PRESSURE="true"
+        CURRENCY="usd"
     fi
 
     # String booleans to 0/1
@@ -1580,9 +1581,52 @@ sparkline() {
     REPLY=$out
 }
 
-# Sets REPLY
+# Sets REPLY; in rupiah when RATE_IDR is set
 fmt_cents() {
+    [ "${RATE_IDR:-0}" -gt 0 ] && { fmt_idr $(($1 * 100)); return; }
     printf -v REPLY '$%d.%02d' $(($1 / 100)) $(($1 % 100))
+}
+
+# Sets REPLY to $1 (in 1/10000 USD) as short rupiah: Rp850, Rp12.3k, Rp1.34M
+fmt_idr() {
+    local n=$((($1 * RATE_IDR + 500000) / 1000000)) frac
+    if [ "$n" -lt 1000 ]; then
+        REPLY="Rp${n}"
+    elif [ "$n" -lt 999950 ]; then
+        n=$(((n + 50) / 100))
+        REPLY="Rp$((n / 10))"
+        [ $((n % 10)) -gt 0 ] && REPLY+=".$((n % 10))"
+        REPLY+="k"
+    else
+        n=$(((n + 5000) / 10000))
+        printf -v frac '%02d' $((n % 100))
+        frac=${frac%0}; frac=${frac%0}
+        REPLY="Rp$((n / 100))${frac:+.$frac}M"
+    fi
+}
+
+# Writes the live USD->IDR mid-market rate x100 to cache $1; Yahoo Finance (intraday),
+# open.er-api.com (daily) as fallback. Rejects values outside Rp1.000-100.000 per USD.
+# shellcheck disable=SC2329  # invoked in the background by usd_idr_rate
+_fetch_usd_idr() {
+    local r
+    r=$(curl -fsS -m 5 -A 'Mozilla/5.0' 'https://query1.finance.yahoo.com/v8/finance/chart/USDIDR=X?range=1d&interval=1d' |
+        jq -r '.chart.result[0].meta.regularMarketPrice // empty | . * 100 | round')
+    [[ "$r" =~ ^[0-9]+$ ]] || r=$(curl -fsS -m 5 'https://open.er-api.com/v6/latest/USD' |
+        jq -r '.rates.IDR // empty | . * 100 | round')
+    [[ "$r" =~ ^[0-9]+$ ]] && [ "$r" -ge 100000 ] && [ "$r" -le 10000000 ] || return
+    stamp_cache "$1.$$" "$r" && mv "$1.$$" "$1"
+}
+
+# Sets REPLY to the cached rate x100 (empty before the first fetch lands); refetches in the
+# background when older than an hour, at most once a minute
+usd_idr_rate() {
+    local cache="${HOME}/.cache/claude-statusline/usd-idr" at=""
+    fresh_cache "$cache" 3600 && return
+    [ -f "$cache.try" ] && read -r at < "$cache.try"
+    [[ "$at" =~ ^[0-9]+$ ]] && [ $((NOW - at)) -lt 60 ] && return
+    mkdir -p "${cache%/*}" 2>/dev/null && echo "$NOW" > "$cache.try" || return
+    (_fetch_usd_idr "$cache") </dev/null >/dev/null 2>&1 &
 }
 
 # Spend across all sessions: sets REPLY to "<today cents> <last 7 days cents>".
@@ -2250,6 +2294,17 @@ main() {
     printf -v final_cost_display '$%.2f' "${session_cost:-0}" 2>/dev/null || final_cost_display='$0.00'
     cost_cents=${final_cost_display//[^0-9]/}
     cost_cents=$((10#${cost_cents:-0}))
+    RATE_IDR=0
+    if [ "$CURRENCY" = "idr" ]; then
+        usd_idr_rate
+        if [[ "$REPLY" =~ ^[0-9]+$ ]]; then
+            RATE_IDR=$REPLY
+            local cost_units
+            printf -v cost_units '%.4f' "${session_cost:-0}" 2>/dev/null || cost_units=0
+            cost_units=${cost_units//[^0-9]/}
+            fmt_idr $((10#${cost_units:-0})); final_cost_display=$REPLY
+        fi
+    fi
     if [ "$cost_cents" -ge 100 ]; then
         final_cost_color="${C_RED}"
     elif [ "$cost_cents" -ge 10 ]; then

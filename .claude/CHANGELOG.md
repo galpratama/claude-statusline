@@ -81,3 +81,8 @@ New functions in `statusline-command.sh`: `format_rate_window`, `format_rate_lim
 - Removed the `↑ <input> ↓ <output>` token counters from line 1 — now redundant
   with the `N% ctx (used/total)` figures. The context section is omitted (no
   dangling separator) when usage data isn't available yet.
+
+## 2026-10-19
+- `display.currency: "idr"` shows costs in rupiah using a live USD→IDR rate (Yahoo Finance, fallback open.er-api), cached hourly; test case `tests/cases/idr`
+- Rupiah shown short: `Rp850`, `Rp12,3rb`, `Rp1,34jt`
+- Short rupiah switched to k/M: `Rp12.3k`, `Rp1.34M`
