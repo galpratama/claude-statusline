@@ -87,3 +87,4 @@ New functions in `statusline-command.sh`: `format_rate_window`, `format_rate_lim
 - Rupiah shown short: `Rp850`, `Rp12,3rb`, `Rp1,34jt`
 - Short rupiah switched to k/M: `Rp12.3k`, `Rp1.34M`
 - session-start-hook.sh falls back to `python` when `python3` is the Windows Store stub
+- patch-honcho.py reads/writes UTF-8 explicitly (Windows Python defaulted to cp1252)

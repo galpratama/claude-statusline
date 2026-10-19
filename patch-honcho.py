@@ -82,7 +82,7 @@ PATCHES = {
 def find_hooks_dir() -> Path:
     installed = Path.home() / ".claude/plugins/installed_plugins.json"
     try:
-        entries = json.loads(installed.read_text())["plugins"]["honcho@honcho"]
+        entries = json.loads(installed.read_text(encoding="utf-8"))["plugins"]["honcho@honcho"]
         path = Path(max(entries, key=lambda e: e.get("lastUpdated", ""))["installPath"]) / "dist/hooks"
         if path.is_dir():
             return path
@@ -97,13 +97,13 @@ def find_hooks_dir() -> Path:
 def write_atomic(path: Path, text: str) -> None:
     # Another hook may be loading this file right now; never let it see a half-written file
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text)
+    tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
 
 
 def patch_file(path: Path, patches, log) -> tuple[bool, bool]:
     """Returns (ok, changed)."""
-    src = path.read_text()
+    src = path.read_text(encoding="utf-8")
     original = src
     ok = True
     for name, old, new in patches:
