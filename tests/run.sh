@@ -12,6 +12,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT/statusline-command.sh"
 UPDATE=""; [ "$1" = "--update" ] && UPDATE=1
 NOW=1767225600  # 2026-01-01T00:00:00Z
+# jq/git dirs go last: Windows keeps them outside the system dirs (WinGet\Links, /mingw64/bin)
+TOOL_DIRS=""
+for t in jq git; do p=$(command -v "$t") && TOOL_DIRS+=":${p%/*}"; done
 pass=0; fail=0
 
 strip() { perl -pe 's/\e\[[0-9;]*m//g'; }
@@ -24,7 +27,7 @@ for case_dir in "$ROOT"/tests/cases/*/; do
     cp "$ROOT/tests/config.json" "$home/.claude/statusline-config.json"
 
     # Isolated environment; PATH keeps only system tools so docker/gh lookups are predictable
-    env_args=(HOME="$home" WORK="$work" CASE="$case_dir" PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+    env_args=(HOME="$home" WORK="$work" CASE="$case_dir" PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin$TOOL_DIRS"
         TZ=UTC LC_ALL=en_US.UTF-8 COLUMNS=200 COLORTERM=truecolor STATUSLINE_NOW="$NOW")
     if [ -f "$case_dir/env" ]; then
         while IFS= read -r line; do [ -n "$line" ] && env_args+=("${line//__HOME__/$home}"); done < "$case_dir/env"

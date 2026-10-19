@@ -1419,10 +1419,18 @@ parse_transcript() {
     # regex instead of parsing JSON; only tool_use lines get parsed. fromjson? skips a
     # partially-written last line. Background agents get an immediate "Async agent launched"
     # tool_result and only finish once a <task-notification> names their tool-use-id.
+    # Temp files, not <(...): native Windows jq.exe can't open /dev/fd/N
+    local tmp="$result_file.$$"
+    "${TSEARCH[@]}" -o '"tool_use_id":"[^"]*"' "$transcript_path" > "$tmp.ids" 2>/dev/null
+    # rg found but not runnable (WinGet's symlinked rg gives "Permission denied" in Git Bash): use grep
+    if [ $? -gt 1 ] && [ "${TSEARCH[0]}" = rg ]; then
+        TSEARCH=(env LC_ALL=C grep -h)
+        "${TSEARCH[@]}" -o '"tool_use_id":"[^"]*"' "$transcript_path" > "$tmp.ids" 2>/dev/null
+    fi
+    "${TSEARCH[@]}" -F 'Async agent launched' "$transcript_path" > "$tmp.async" 2>/dev/null
+    "${TSEARCH[@]}" -o '<tool-use-id>[^<]*</tool-use-id>' "$transcript_path" > "$tmp.notified" 2>/dev/null
     "${TSEARCH[@]}" -F '"type":"tool_use"' "$transcript_path" 2>/dev/null | jq -nRr \
-        --rawfile result_ids <("${TSEARCH[@]}" -o '"tool_use_id":"[^"]*"' "$transcript_path" 2>/dev/null) \
-        --rawfile async_lines <("${TSEARCH[@]}" -F 'Async agent launched' "$transcript_path" 2>/dev/null) \
-        --rawfile notified_ids <("${TSEARCH[@]}" -o '<tool-use-id>[^<]*</tool-use-id>' "$transcript_path" 2>/dev/null) '
+        --rawfile result_ids "$tmp.ids" --rawfile async_lines "$tmp.async" --rawfile notified_ids "$tmp.notified" '
         def is_agent: .name == "Agent" or .name == "Task";
         def text: if type == "array" then map(.text? // "") | join("") else tostring end;
         def id_set(s; re): [s | scan(re)[0] | {key: ., value: true}] | from_entries;
@@ -1456,7 +1464,8 @@ parse_transcript() {
           ($d | length), ([$d[] | select(.status == "completed")] | length),
           ([$d[] | select(.status == "in_progress")][0] // {} | .activeForm // .content // "" | s),
           ($c[:3][] | "\(.name)\t\(.count)"), (if ($c | length) > 3 then "+\t\(($c | length) - 3)" else empty end)
-    ' > "$result_file.$$" 2>/dev/null && mv "$result_file.$$" "$result_file"
+    ' > "$tmp" 2>/dev/null && mv "$tmp" "$result_file"
+    rm -f "$tmp.ids" "$tmp.async" "$tmp.notified"
 }
 
 # mcp__plugin_honcho_honcho__get_config -> honcho:get_config (sets REPLY)
@@ -1948,8 +1957,8 @@ format_honcho_status() {
     [[ "$json" =~ \"recalled\":[[:space:]]*([0-9]+) ]] && seg+=" ${C_PURPLE}←${BASH_REMATCH[1]}${C_RESET}"
     [[ "$json" =~ \"captured\":[[:space:]]*([0-9]+) ]] && seg+=" ${C_GRAY}↑${BASH_REMATCH[1]}${C_RESET}"
     [[ "$json" =~ \"saved\":[[:space:]]*([0-9]+) ]] && seg+=" ${C_GRAY}✓${BASH_REMATCH[1]}${C_RESET}"
-    REPLY=""
-    [ "$seg" != "🧠" ] && REPLY=$seg
+    [ "$seg" = "🧠" ] && seg=""
+    REPLY=$seg
 }
 
 # Prompt cache: hit ratio plus time until the cache goes cold (an idle-cost warning)
@@ -1991,6 +2000,10 @@ format_prompt_cache() {
 # ============================================================================
 
 main() {
+    # Builtin read (no `cat` fork); stdin is read here, not inside <(jq ...), where Cygwin bash
+    # doesn't reliably hand it through
+    local input=""
+    IFS= read -r -d '' input
     # Parse all input fields in one jq call; order must match the read list below
     local current_dir model_raw model_id model total_input total_output context_size session_id
     local json_cost lines_added lines_removed
@@ -2014,7 +2027,7 @@ main() {
         IFS= read -r cache_warm; IFS= read -r fast_mode; IFS= read -r thinking_on; IFS= read -r session_name
         IFS= read -r api_duration
         IFS= read -r five_pct; IFS= read -r five_resets; IFS= read -r seven_pct; IFS= read -r seven_resets
-    } < <(jq -Rrs '
+    } < <(jq -Rrs <<< "$input" '
         (fromjson? // {}) as $in | $in |
         def v(p; d): ((p // d) | tostring);
         v(.workspace.current_dir; ""), v(.model.display_name; ""), v(.model.id; ""),
@@ -2434,7 +2447,8 @@ main() {
     [ "$files_edited_count" -gt 0 ] && stats_parts+=("✎ $files_edited_count")
     [ "$bash_commands_count" -gt 0 ] && stats_parts+=("⚡ $bash_commands_count")
     if [ ${#stats_parts[@]} -gt 0 ]; then
-        local IFS=' '; stats_sec="${C_GRAY}${stats_parts[*]}${C_RESET}"; unset IFS
+        printf -v stats_sec '%s ' "${stats_parts[@]}"
+        stats_sec="${C_GRAY}${stats_sec% }${C_RESET}"
     fi
 
     # Section 3: Dev + Config
@@ -2465,7 +2479,9 @@ main() {
     [ -n "$honcho_section" ] && config_parts+=("$honcho_section")
     if [ ${#config_parts[@]} -gt 0 ]; then
         [ -n "$dev_cfg" ] && dev_cfg+=" · "
-        local IFS=' '; dev_cfg+="${config_parts[*]}"; unset IFS
+        local joined
+        printf -v joined '%s ' "${config_parts[@]}"
+        dev_cfg+=${joined% }
     fi
 
     # Append sections with ┊ separators
