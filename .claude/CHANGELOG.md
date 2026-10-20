@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-20 — Ponytail segment
+- `🐴 <level> reuse N% · N callers open · ✓ N passed · ⏱ Nm` next to Honcho: the ponytail band's info in the statusline, so the band can stay hidden (`/ponytail band`)
+- Level from `$CLAUDE_CONFIG_DIR/.ponytail-active`, the rest from the band ledger `~/.config/ponytail/band/*.csv` (row by session id); cost/tokens skipped (already on the AI line)
+- Test case `tests/cases/ponytail` (stale row, other session, quoted comma in name)
+
 ## 2026-10-17 — Security, tests, shellcheck
 - Security: state moved from shared `/tmp` to `~/.cache/claude-statusline/state` (0700); live files migrated; prune hook updated
 - Limit notifications name the best account to switch to

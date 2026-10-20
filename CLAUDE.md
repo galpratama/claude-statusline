@@ -31,6 +31,7 @@ Render path is fork-free where possible (a fork costs ~25ms in Git Bash on Windo
 - `get_git_info` / `get_git_metrics` - one `git status --porcelain=v2 --branch --show-stash` (`branch<TAB>stash<TAB>info`) plus one `git log -n 100 --format=%ct` (last commit age + commits since local midnight)
 - bash 3.2 gotcha: in `IFS=$'\t' read ... <<< "$(cmd)"` the IFS also applies inside `cmd`; capture into a variable first
 - `grad_color` sets `GRAD` instead of printing (no subshell per bar cell)
+- `format_ponytail_status` - ponytail level (`.ponytail-active` flag) plus reuse/callers/tests/agent time from the band ledger `~/.config/ponytail/band/*.csv`; trailing CSV columns are read from the end because the name column may hold quoted commas
 - `format_rate_window`, `format_prompt_cache` - render `.rate_limits` (values come from the main jq call; run-out projection) and `.prompt_cache`
 - `get_account_info` - account + plan from `$CLAUDE_CONFIG_DIR/.claude.json` (else `~/.claude.json`); `record_account_quota` / `suggest_account` share limits across accounts via `~/.cache/claude-statusline/quota-<account>.tsv`
 - `grad_color` / `make_bar` - truecolor gradient + 1/8-cell bar (16-color fallback); `fit_line` - drops segments by priority to fit `$COLUMNS`. Lines 1-2 are built as `prio<TAB>sep<TAB>text` segments

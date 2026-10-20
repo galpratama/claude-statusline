@@ -2006,6 +2006,46 @@ format_honcho_status() {
     REPLY=$seg
 }
 
+# Ponytail band info: level from its flag, the rest from the band's per-project ledger
+# (~/.config/ponytail/band/*.csv, one row per session, rewritten every turn even while the band is hidden).
+# Cost and tokens are skipped: the AI line already shows them. Sets REPLY.
+format_ponytail_status() {
+    local level="" row="" line file f
+    REPLY=""
+    slurp "${CLAUDE_CONFIG_DIR:-${HOME}/.claude}/.ponytail-active" && level=$REPLY
+    REPLY=""
+    if [ -n "$1" ]; then
+        for file in "${XDG_CONFIG_HOME:-${HOME}/.config}"/ponytail/band/*.csv; do
+            [ -r "$file" ] || continue
+            # Key is "<first 8 of session id>-<start ms>"; a /clear starts a new row, the newest is last
+            while IFS= read -r line; do [[ "$line" == "${1:0:8}-"* ]] && row=$line; done < "$file"
+        done
+    fi
+    [ -z "$row" ] && { [ -z "$level" ] || [ "$level" = "off" ]; } && return
+
+    local seg="🐴 ${C_PURPLE}${level:-off}${C_RESET}"
+    if [ -n "$row" ]; then
+        # Read from the end: the name column may hold quoted commas, the trailing columns never do.
+        # ... agent_minutes,tokens_total,tokens_output,reuse_pct,reused,new,callers_open,tests,level,model
+        IFS=',' read -ra f <<< "$row,"
+        local n=${#f[@]} reuse new callers tests mins
+        mins=${f[n-10]} reuse=${f[n-7]} new=${f[n-5]} callers=${f[n-4]} tests=${f[n-3]}
+        if [ -n "$reuse" ]; then
+            seg+=" ${C_GRAY}reuse${C_RESET} ${reuse}%"
+        elif [ "${new:-0}" != 0 ]; then
+            seg+=" ${C_GRAY}${new} new${C_RESET}"
+        fi
+        [ "${callers:-0}" != 0 ] && seg+=" ${C_YELLOW}${callers} callers open${C_RESET}"
+        case "$tests" in
+            *passed) seg+=" ${C_GREEN}✓ ${tests}${C_RESET}" ;;
+            *failed) seg+=" ${C_RED}✗ ${tests}${C_RESET}" ;;
+            stale) seg+=" ${C_YELLOW}tests stale${C_RESET}" ;;
+        esac
+        [ -n "$mins" ] && seg+=" ${C_GRAY}⏱ ${mins}m${C_RESET}"
+    fi
+    REPLY=$seg
+}
+
 # Prompt cache: hit ratio plus time until the cache goes cold (an idle-cost warning)
 # Sets REPLY
 format_prompt_cache() {
@@ -2541,6 +2581,8 @@ main() {
     local honcho_section
     format_honcho_status "$session_id"; honcho_section=$REPLY
     [ -n "$honcho_section" ] && config_parts+=("$honcho_section")
+    format_ponytail_status "$session_id"
+    [ -n "$REPLY" ] && config_parts+=("$REPLY")
     if [ ${#config_parts[@]} -gt 0 ]; then
         [ -n "$dev_cfg" ] && dev_cfg+=" · "
         local joined
