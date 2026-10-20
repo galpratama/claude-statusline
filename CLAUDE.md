@@ -33,7 +33,7 @@ Render path is fork-free where possible (a fork costs ~25ms in Git Bash on Windo
 - `grad_color` sets `GRAD` instead of printing (no subshell per bar cell)
 - `format_ponytail_status` - ponytail level (`.ponytail-active` flag) plus reuse/callers/tests/agent time from the band ledger `~/.config/ponytail/band/*.csv`; trailing CSV columns are read from the end because the name column may hold quoted commas
 - `format_rate_window`, `format_prompt_cache` - render `.rate_limits` (values come from the main jq call; run-out projection) and `.prompt_cache`
-- `get_account_info` - account + plan from `$CLAUDE_CONFIG_DIR/.claude.json` (else `~/.claude.json`); `record_account_quota` / `suggest_account` share limits across accounts via `~/.cache/claude-statusline/quota-<account>.tsv`
+- `get_account_info` - account (first word of `displayName`, lowercased; else the email's local part) + plan from `$CLAUDE_CONFIG_DIR/.claude.json` (else `~/.claude.json`); `record_account_quota` / `suggest_account` share limits across accounts via `~/.cache/claude-statusline/quota-<account>.tsv`
 - `grad_color` / `make_bar` - truecolor gradient + 1/8-cell bar (16-color fallback); `fit_line` - drops segments by priority to fit `$COLUMNS`. Lines 1-2 are built as `prio<TAB>sep<TAB>text` segments
 - `sparkline` (history in `$STATE_DIR/hist-{session_id}`), `cost_ledger` (per-day spend in `~/.cache/claude-statusline/cost-YYYY-MM-DD.tsv`), `get_pr_status` (background `gh`, cache `$STATE_DIR/pr-<cache_key>`)
 - Theme palette is resolved before the `readonly` color constants (`.display.theme` comes from the `load_config` jq)
@@ -133,6 +133,6 @@ All state lives in `STATE_DIR` = `~/.cache/claude-statusline/state/` (0700; not 
 - `session-*`, `metrics-*`, `messages-*`, `stats-*` - per-session start time, token total, message count, stats
 - `ctxgrowth-*`, `hist-*` - context growth average and per-message history (sparklines)
 - `transcript-result-*` - parsed transcript summary
-- `account-*`, `pr-*`, `servers-*`, `docker`, `notified-*` - caches and notification flags
+- `acct-*`, `pr-*`, `servers-*`, `docker`, `notified-*` - caches and notification flags
 
 Shared across sessions in `~/.cache/claude-statusline/`: `cost-YYYY-MM-DD.tsv` (spend ledger), `quota-<account>.tsv` (last-seen limits), `mode`.

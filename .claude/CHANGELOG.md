@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-20 — Account name = first name
+- Account badge uses the first word of `oauthAccount.displayName` (lowercased), else the email's local part as before: `@hi` → `@galih`, same names as the SwiftBar claude-quota labels
+- Account cache renamed `account-*` → `acct-*` so cached old names are not reused; `quota-hi.tsv` renamed to `quota-galih.tsv` on the Mac
+
 ## 2026-10-20 — Ponytail segment
 - `🐴 <level> reuse N% · N callers open · ✓ N passed · ⏱ Nm` next to Honcho: the ponytail band's info in the statusline, so the band can stay hidden (`/ponytail band`)
 - Level from `$CLAUDE_CONFIG_DIR/.ponytail-active`, the rest from the band ledger `~/.config/ponytail/band/*.csv` (row by session id); cost/tokens skipped (already on the AI line)

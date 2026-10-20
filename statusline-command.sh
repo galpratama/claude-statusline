@@ -1941,13 +1941,14 @@ get_account_info() {
     [ -n "$CLAUDE_CONFIG_DIR" ] || account_file="${HOME}/.claude.json"
     REPLY=""
     [ -f "$account_file" ] || return
-    cache_key "$account_file"; cache_file="${STATE_DIR}/account-${REPLY}"
+    cache_key "$account_file"; cache_file="${STATE_DIR}/acct-${REPLY}"
     if [ ! -f "$cache_file" ] || [ "$account_file" -nt "$cache_file" ]; then
         jq -r '
             .oauthAccount // {} |
             ({claude_max: "Max", claude_pro: "Pro", claude_team: "Team", claude_enterprise: "Enterprise"}[.organizationType // ""] // "") as $plan |
             ((.userRateLimitTier // "") | (capture("max_(?<x>[0-9]+x)")? | .x) // "") as $mult |
-            [(.emailAddress // "" | split("@")[0]), ([$plan, $mult] | map(select(. != "")) | join(" "))] | @tsv
+            ((.displayName // "") | ascii_downcase | split(" ") | .[0] // "") as $first |
+            [(if $first != "" then $first else (.emailAddress // "" | split("@")[0]) end), ([$plan, $mult] | map(select(. != "")) | join(" "))] | @tsv
         ' "$account_file" > "$cache_file" 2>/dev/null
     fi
     slurp "$cache_file"
