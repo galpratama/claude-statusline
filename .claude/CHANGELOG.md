@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-31 — `mini` mode
+- New `mini` mode: one short line with no bars or gutter: `Opus 5.5 1M · $2.84 · ctx 88% · 5h 64% · 7d 23% · ◈ work +212/-87`; percentages keep their gradient colors and segments drop by priority on narrow terminals
+- `--mode mini` accepted; snapshot case `tests/cases/mini`; README + CLAUDE.md updated
+
 ## 2026-10-20 — Account name = first name
 - Account badge uses the first word of `oauthAccount.displayName` (lowercased), else the email's local part as before: `@hi` → `@galih`, same names as the SwiftBar claude-quota labels
 - Account cache renamed `account-*` → `acct-*` so cached old names are not reused; `quota-hi.tsv` renamed to `quota-galih.tsv` on the Mac

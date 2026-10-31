@@ -38,7 +38,7 @@ Render path is fork-free where possible (a fork costs ~25ms in Git Bash on Windo
 - `sparkline` (history in `$STATE_DIR/hist-{session_id}`), `cost_ledger` (per-day spend in `~/.cache/claude-statusline/cost-YYYY-MM-DD.tsv`), `get_pr_status` (background `gh`, cache `$STATE_DIR/pr-<cache_key>`)
 - Theme palette is resolved before the `readonly` color constants (`.display.theme` comes from the `load_config` jq)
 - `bg_cached` - background-refreshed command cache (PR via `_fetch_pr`, docker), freshness stamp in `<cache>.at`; `fresh_cache`/`stamp_cache` - "epoch\nvalue" caches (`ver-*` tool versions, `sub-*` subscription); `notify_once` - osascript notification keyed by a flag in `$STATE_DIR/notified-*`
-- Mode (`zen`/`compact`/`full`): `STATUSLINE_MODE` or `~/.cache/claude-statusline/mode`, set with `--mode`
+- Mode (`mini`/`zen`/`compact`/`full`; mini returns early with its own one-line render): `STATUSLINE_MODE` or `~/.cache/claude-statusline/mode`, set with `--mode`
 - `calculate_cost` - only used when the input has no `.cost.total_cost_usd`
 - Currency: `display.currency: "idr"` sets `RATE_IDR` (USD→IDR ×100) from `usd_idr_rate` (`~/.cache/claude-statusline/usd-idr`, hourly background `_fetch_usd_idr`); `fmt_cents`/`fmt_idr` format. Rate 0 (no cache yet) = USD
 - Memory pressure: macOS only, one `sysctl kern.memorystatus_vm_pressure_level` per render, `⚠ RAM` at warn (2) / critical (4); `features.memory_pressure: false` turns it off (tests do)

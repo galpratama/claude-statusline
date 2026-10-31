@@ -2487,6 +2487,22 @@ main() {
     # zen: one line of essentials (prio ≤3) plus alerts; compact: first two lines
     local mode=$STATUSLINE_MODE
     [ -n "$mode" ] || { slurp "${HOME}/.cache/claude-statusline/mode"; mode=$REPLY; }
+    if [ "$mode" = "mini" ]; then
+        local -a sm=("0${T}${T}${C_PURPLE}${model}${C_RESET}")
+        [ "$SHOW_COST" = "true" ] && sm+=("2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
+        [ "$context_usage_pct" -gt 0 ] && sm+=("1${T}${D}${T}${C_GRAY}ctx${C_RESET} ${context_usage_color}${context_usage_pct}%${C_RESET}")
+        if [ "$SHOW_RATE_LIMIT" = "true" ]; then
+            [[ "$five_pct" =~ ^[0-9]+$ ]] && { grad_color "$five_pct"; sm+=("3${T}${D}${T}${C_GRAY}5h${C_RESET} ${GRAD}${five_pct}%${C_RESET}"); }
+            [[ "$seven_pct" =~ ^[0-9]+$ ]] && { grad_color "$seven_pct"; sm+=("4${T}${D}${T}${C_GRAY}7d${C_RESET} ${GRAD}${seven_pct}%${C_RESET}"); }
+        fi
+        local mini_dir="◈ ${dir}"
+        [ "$lines_added" -gt 0 ] && mini_dir+=" ${C_GREEN}+${lines_added}${C_RESET}"
+        [ "$lines_removed" -gt 0 ] && mini_dir+="${C_GRAY}/${C_RESET}${C_RED}-${lines_removed}${C_RESET}"
+        sm+=("5${T}${D}${T}${mini_dir}")
+        fit_line "$((line_width + 2))" "${sm[@]}"
+        printf "  %b\n" "$REPLY"
+        return
+    fi
     if [ "$mode" = "zen" ]; then
         local -a zen_segs=()
         local seg
@@ -2667,13 +2683,13 @@ main() {
     done
 }
 
-# `statusline-command.sh --mode zen|compact|full` switches the layout for every session
+# `statusline-command.sh --mode mini|zen|compact|full` switches the layout for every session
 if [ "$1" = "--mode" ]; then
     case "$2" in
-        zen|compact|full)
+        mini|zen|compact|full)
             mkdir -p "${HOME}/.cache/claude-statusline" && echo "$2" > "${HOME}/.cache/claude-statusline/mode"
             echo "statusline mode: $2"; exit 0 ;;
-        *) echo "usage: $0 --mode zen|compact|full" >&2; exit 1 ;;
+        *) echo "usage: $0 --mode mini|zen|compact|full" >&2; exit 1 ;;
     esac
 fi
 
