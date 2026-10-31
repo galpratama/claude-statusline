@@ -28,6 +28,8 @@ Render path is fork-free where possible (a fork costs ~25ms in Git Bash on Windo
 - `load_config` - all segment toggles in one `jq` call over `~/.claude/statusline-config.json`
 - `parse_transcript` - only `tool_use` lines are JSON-parsed; `tool_result` IDs are pulled by regex (tool output is most of a transcript's bytes). Uses `rg` via `TSEARCH` when available, BSD grep is ~20x slower on big transcripts. Its jq outputs render-ready lines to `$STATE_DIR/transcript-lines-*`, re-parsed only when the transcript is newer
 - Subagents: `Agent` (and legacy `Task`) tool uses. Background agents get an immediate "Async agent launched" result and count as running until a `<task-notification>` with their `<tool-use-id>` appears
+- `get_commit_status` - no open PR: `statusCheckRollup` of the remote branch tip via one `gh api graphql` (`{owner}`/`{repo}` placeholders), cache `$STATE_DIR/ci-<cache_key>`; FAILURE/ERROR is an `s1` alert, SUCCESS/PENDING go on line 2
+- `get_rx_status` - `rx -d` session for the repo in the path: only when `~/.cache/rx/<repo>.watch.pid` is alive (`kill -0`), then `_fetch_rx` (`ssh -S none` + `tmux list-panes` start command, or `down`) via `bg_cached`; port parsed from `--port`/`-p`/`PORT=`
 - `get_git_info` / `get_git_metrics` - one `git status --porcelain=v2 --branch --show-stash` (`branch<TAB>stash<TAB>info`) plus one `git log -n 100 --format=%ct` (last commit age + commits since local midnight)
 - bash 3.2 gotcha: in `IFS=$'\t' read ... <<< "$(cmd)"` the IFS also applies inside `cmd`; capture into a variable first
 - `grad_color` sets `GRAD` instead of printing (no subshell per bar cell)

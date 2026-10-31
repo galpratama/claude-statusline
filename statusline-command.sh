@@ -39,6 +39,16 @@ slurp() {
     return 0
 }
 
+# Shows context % as the $ctx token in herdr's agent sidebar; reports only on change, in the background.
+report_herdr_ctx() {
+    local sid=$1 pct=$2 f
+    [ -n "${HERDR_PANE_ID:-}" ] && [[ "$pct" =~ ^[0-9]+$ ]] || return 0
+    f="${STATE_DIR}/herdr-ctx-${sid}"
+    slurp "$f" && [ "$REPLY" = "$pct" ] && return 0
+    printf '%s\n' "$pct" > "$f"
+    (herdr pane report-metadata "$HERDR_PANE_ID" --source claude-ctx --token "ctx=${pct}%" >/dev/null 2>&1 &)
+}
+
 # Succeeds with the cached value in REPLY when file $1 ("epoch\nvalue", see stamp_cache)
 # is younger than $2 seconds
 fresh_cache() {
@@ -1696,6 +1706,57 @@ get_pr_status() {
     bg_cached "pr-$REPLY" _fetch_pr "$dir" "$branch"
 }
 
+# Status rollup of the branch tip on GitHub (Actions check runs + Vercel-style commit statuses):
+# "STATE<TAB>failing,check,names"; nothing when the commit has no checks
+# shellcheck disable=SC2329,SC2016  # invoked through bg_cached; $owner etc. are GraphQL variables
+_fetch_commit_status() {
+    cd "$1" && gh api graphql -F owner='{owner}' -F repo='{repo}' -f ref="refs/heads/$2" -f query='
+        query($owner: String!, $repo: String!, $ref: String!) { repository(owner: $owner, name: $repo) {
+          ref(qualifiedName: $ref) { target { ... on Commit { statusCheckRollup { state
+            contexts(first: 50) { nodes { ... on CheckRun { name conclusion } ... on StatusContext { context state } } } } } } } } }' \
+        --jq '.data.repository.ref.target.statusCheckRollup // empty |
+            [.state, ([.contexts.nodes[] | select((.conclusion // .state // "") | test("FAILURE|ERROR|TIMED_OUT|ACTION_REQUIRED"))
+                       | (.name // .context)] | unique | join(","))] | @tsv'
+}
+
+get_commit_status() {
+    local dir=$1 branch=$2
+    REPLY=""
+    command -v gh >/dev/null 2>&1 && [ -n "$branch" ] && [ "$branch" != "detached" ] || return
+    cache_key "${dir}|${branch}"
+    bg_cached "ci-$REPLY" _fetch_commit_status "$dir" "$branch"
+}
+
+# Start command of the repo's `rx -d` tmux pane on contabo, or "down" when the session is gone
+# shellcheck disable=SC2329  # invoked through bg_cached
+_fetch_rx() {
+    # -S none: a stale ControlMaster socket would hang past ConnectTimeout
+    ssh -S none -o BatchMode=yes -o ConnectTimeout=3 "${RX_HOST:-contabo-ts}" \
+        "tmux list-panes -t $(printf %q "rx-$1") -F '#{pane_start_command}' 2>/dev/null || echo down"
+}
+
+# Remote dev server started with `rx -d` for the repo containing $1. rx keeps a live-sync pid in
+# ~/.cache/rx/<repo>.watch.pid while detached, so ssh runs only for repos with a live one
+get_rx_status() {
+    REPLY=""
+    local pidf name pid re='(--port|-p|PORT=)[ =]*([0-9]{2,5})'
+    for pidf in "${HOME}/.cache/rx"/*.watch.pid; do
+        [ -f "$pidf" ] || continue
+        name=${pidf##*/}; name=${name%.watch.pid}
+        [[ "$1/" == */"$name"/* ]] || continue
+        { read -r pid < "$pidf" && kill -0 "$pid"; } 2>/dev/null || continue
+        bg_cached "rx-$name" _fetch_rx "$name"
+        if [ "$REPLY" = "down" ]; then
+            REPLY="${C_RED}☁ rx down${C_RESET}"
+        elif [[ "$REPLY" =~ $re ]]; then
+            REPLY="${C_GREEN}☁ :${BASH_REMATCH[2]}${C_RESET}"
+        elif [ -n "$REPLY" ]; then
+            REPLY="${C_GREEN}☁ rx${C_RESET}"
+        fi
+        return
+    done
+}
+
 # shellcheck disable=SC2329  # invoked through bg_cached
 _docker_count() {
     docker ps -q | grep -c .
@@ -2151,6 +2212,7 @@ main() {
     [[ ! "$total_input" =~ ^[0-9]+$ ]] && total_input=0
     [[ ! "$total_output" =~ ^[0-9]+$ ]] && total_output=0
     [[ ! "$context_size" =~ ^[0-9]+$ ]] && context_size=0
+    report_herdr_ctx "$session_id" "$native_ctx_pct"
 
     if [ "$mcp_servers_count" -eq 0 ] && [ -f "$HOME/.claude/.claude.json" ]; then
         mcp_servers_count=$(jq -r '.mcpServers // {} | length' "$HOME/.claude/.claude.json" 2>/dev/null || echo "0")
@@ -2312,6 +2374,19 @@ main() {
     last_commit_time=${git_metrics%%|*}
     commits_today=${git_metrics#*|}
 
+    # Open PR (its checks are shown with it), else the checks of the pushed branch tip
+    local pr_num="" pr_checks="" pr_review="" ci_state="" ci_failing=""
+    if [ -n "$git_info" ]; then
+        get_pr_status "$current_dir" "$branch"; IFS=$'\t' read -r pr_num pr_checks pr_review <<< "$REPLY"
+        if ! [[ "$pr_num" =~ ^[0-9]+$ ]]; then
+            get_commit_status "$current_dir" "$branch"; IFS=$'\t' read -r ci_state ci_failing <<< "$REPLY"
+        fi
+    fi
+    local rx_status=""
+    if [ "$SHOW_DEV" = "true" ] && [ "$SHOW_SERVERS" = "true" ]; then
+        get_rx_status "$current_dir"; rx_status=$REPLY
+    fi
+
     # Directory name (either slash: Windows paths arrive with backslashes)
     local dir=$current_dir
     while [[ "$dir" == ?*[/\\] ]]; do dir=${dir%?}; done
@@ -2406,15 +2481,23 @@ main() {
 
     # Account badge only once more than one account has reported limits
     local -a known_accounts=("${HOME}/.cache/claude-statusline"/quota-*.tsv)
+    local acct_badge=""
     if [ -n "$account_name" ] && [ ${#known_accounts[@]} -gt 1 ]; then
-        account_color "$account_name"; l1="${REPLY}@${account_name}${C_RESET} ${l1}"
+        account_color "$account_name"; acct_badge="${REPLY}@${account_name}${C_RESET} "
+        l1="${acct_badge}${l1}"
     fi
+
+    local mode=$STATUSLINE_MODE
+    [ -n "$mode" ] || { slurp "${HOME}/.cache/claude-statusline/mode"; mode=$REPLY; }
+    # auto hides cost on both its lines
+    local show_cost=$SHOW_COST
+    [ "$mode" = "auto" ] && show_cost=false
 
     # Segments: "prio<TAB>separator<TAB>text"; fit_line drops high prio first on narrow terminals
     local T=$'\t' D=" · "
     local -a s1=("0${T}${T}${l1# }")
     [ "$SHOW_PROVIDER" = "true" ] && s1+=("8${T}${D}${T}${provider_section}")
-    if [ "$SHOW_COST" = "true" ]; then
+    if [ "$show_cost" = "true" ]; then
         s1+=("2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
         [ -n "$cost_spark" ] && s1+=("7${T} ${T}${final_cost_color}${cost_spark}${C_RESET}")
         [ -n "$burn_rate" ] && s1+=("6${T} ${T}${C_GRAY}${burn_rate}${C_RESET}")
@@ -2445,6 +2528,12 @@ main() {
             [ "$msgs_left" -le 10 ] && left_color="${C_ALERT}"
             s1+=("3${T} ${T}${left_color}~${msgs_left} msg left${C_RESET}")
         fi
+    fi
+
+    if [ "$ci_state" = "FAILURE" ] || [ "$ci_state" = "ERROR" ]; then
+        local failing=${ci_failing:-checks}
+        [ ${#failing} -gt 24 ] && failing="${failing:0:23}…"
+        s1+=("1${T}${SEP}${T}${C_ALERT}⚠ ${branch} ✗${C_RESET} ${C_GRAY}${failing}${C_RESET}")
     fi
 
     # macOS memory pressure (1 normal, 2 warn, 4 critical): a hint to move heavy work elsewhere
@@ -2485,23 +2574,32 @@ main() {
     local line_width=999
     [[ "$COLUMNS" =~ ^[0-9]+$ ]] && line_width=$((COLUMNS - 6))
     # zen: one line of essentials (prio ≤3) plus alerts; compact: first two lines
-    local mode=$STATUSLINE_MODE
-    [ -n "$mode" ] || { slurp "${HOME}/.cache/claude-statusline/mode"; mode=$REPLY; }
     # auto: the mini line while quiet, the zen line on an alert, plus live tool/agent/todo lines
     local auto_alert=""
     [ "$mode" = "auto" ] && [[ "${s1[*]}" == *⚠* || "${s1[*]}" == *⇄* ]] && auto_alert=1
     if [ "$mode" = "mini" ] || { [ "$mode" = "auto" ] && [ -z "$auto_alert" ]; }; then
-        local -a sm=("0${T}${T}${C_PURPLE}${model}${C_RESET}")
-        [ "$SHOW_COST" = "true" ] && sm+=("2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
+        local mini_model="${acct_badge}${C_PURPLE}${model}${C_RESET}"
+        if [ -n "$effort_level" ]; then
+            local effort_short=${effort_level:0:2}
+            case "$effort_level" in medium) effort_short=md ;; xhigh) effort_short=xh ;; max) effort_short=mx ;; esac
+            mini_model+=" ${effort_color}${effort_short}${C_RESET}"
+        fi
+        local -a sm=("0${T}${T}${mini_model}")
+        [ "$show_cost" = "true" ] && sm+=("2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
         [ "$context_usage_pct" -gt 0 ] && sm+=("1${T}${D}${T}${C_GRAY}ctx${C_RESET} ${context_usage_color}${context_usage_pct}%${C_RESET}")
         if [ "$SHOW_RATE_LIMIT" = "true" ]; then
             [[ "$five_pct" =~ ^[0-9]+$ ]] && { grad_color "$five_pct"; sm+=("3${T}${D}${T}${C_GRAY}5h${C_RESET} ${GRAD}${five_pct}%${C_RESET}"); }
             [[ "$seven_pct" =~ ^[0-9]+$ ]] && { grad_color "$seven_pct"; sm+=("4${T}${D}${T}${C_GRAY}7d${C_RESET} ${GRAD}${seven_pct}%${C_RESET}"); }
         fi
         local mini_dir="◈ ${dir}"
+        if [ -n "$branch" ]; then
+            mini_dir+=" ${C_GRAY}⎇${C_RESET} ${branch}"
+            [[ "$git_info" =~ (↑[0-9]+|↕[0-9]+↓[0-9]+) ]] && mini_dir+=" ${C_YELLOW}${BASH_REMATCH[1]}${C_RESET}"
+        fi
         [ "$lines_added" -gt 0 ] && mini_dir+=" ${C_GREEN}+${lines_added}${C_RESET}"
         [ "$lines_removed" -gt 0 ] && mini_dir+="${C_GRAY}/${C_RESET}${C_RED}-${lines_removed}${C_RESET}"
         sm+=("5${T}${D}${T}${mini_dir}")
+        [ -n "$rx_status" ] && sm+=("4${T}${D}${T}${rx_status}")
         if [ "$mode" = "mini" ]; then
             fit_line "$((line_width + 2))" "${sm[@]}"
             printf "  %b\n" "$REPLY"
@@ -2532,8 +2630,10 @@ main() {
     if [ -n "$git_info" ]; then
         s2+=("0${T}${SEP}${T}${dir} ${git_info}${C_RESET}")
 
-        local pr_num pr_checks pr_review
-        get_pr_status "$current_dir" "$branch"; IFS=$'\t' read -r pr_num pr_checks pr_review <<< "$REPLY"
+        case "$ci_state" in
+            SUCCESS)          s2+=("2${T}${D}${T}${C_GREEN}▲ ✓${C_RESET}") ;;
+            PENDING|EXPECTED) s2+=("2${T}${D}${T}${C_YELLOW}▲ ◌${C_RESET}") ;;
+        esac
         if [[ "$pr_num" =~ ^[0-9]+$ ]]; then
             local pr_seg="PR #${pr_num}"
             case "$pr_checks" in
@@ -2589,6 +2689,7 @@ main() {
         [ -n "$dev_cfg" ] && dev_cfg+=" · "
         dev_cfg+="${C_GREEN}${running_servers}${C_RESET}"
     fi
+    [ -n "$rx_status" ] && { [ -n "$dev_cfg" ] && dev_cfg+=" · "; dev_cfg+=$rx_status; }
     local docker_count=""
     [ "$SHOW_DOCKER" = "true" ] && { get_docker_count; docker_count=$REPLY; }
     if [ -n "$docker_count" ]; then

@@ -454,13 +454,13 @@ This controls what the statusline displays and how it behaves. See [Customizatio
 Context ≥85%, cache expiring within 5 minutes, a usage limit ≥90% or projected to run out are shown bold with `⚠`, and the gutter turns red.
 
 ### Multiple Accounts
-Sessions launched with `CLAUDE_CONFIG_DIR` (one config dir per account) show the account (`@naira`, the email's local part) in a stable per-account color, and the plan label comes from that account. Each account records its last-seen limits in `~/.cache/claude-statusline/quota-<account>.tsv`; when the current account nears a limit (5h ≥80% or projected to run out, 7d ≥90%), the line suggests the other account with the most 5h headroom (`⇄ @azura 12%`). Limit notifications name that account too. A window past its reset counts as 0%. The badge appears once two or more accounts have reported.
+Sessions launched with `CLAUDE_CONFIG_DIR` (one config dir per account) show the account (`@naira`, the email's local part) in a stable per-account color, and the plan label comes from that account. Each account records its last-seen limits in `~/.cache/claude-statusline/quota-<account>.tsv`; when the current account nears a limit (5h ≥80% or projected to run out, 7d ≥90%), the line suggests the other account with the most 5h headroom (`⇄ @azura 12%`). Limit notifications name that account too. A window past its reset counts as 0%. The badge appears once two or more accounts have reported. `mini` and `auto` keep it on their short line.
 
 ### Notifications
 A macOS notification (once per usage window / session) when a usage limit hits 90% or is projected to run out before it resets, and when context reaches 90%. Disable with `"features": {"notifications": false}`.
 
 ### Modes
-`full` (default), `compact` (first two lines), `zen` (one line: model, cost, context, limits + alerts), `mini` (one short line, no bars: model · cost · ctx% · 5h% · 7d% · dir +/-) or `auto` (the mini line while quiet; on a ⚠ alert it becomes the zen line, and running tools, agents and todos get their own lines). Switch for every session with `~/Scripts/claude-statusline/statusline-command.sh --mode zen`, or per process with `STATUSLINE_MODE=zen`.
+`full` (default), `compact` (first two lines), `zen` (one line: model, cost, context, limits + alerts), `mini` (one short line, no bars: model · cost · ctx% · 5h% · 7d% · dir ⎇ branch ↑unpushed +/- · `☁ :port` while an `rx -d` server runs) or `auto` (the mini line without cost while quiet; on a ⚠ alert it becomes the zen line, and running tools, agents and todos get their own lines). Switch for every session with `~/Scripts/claude-statusline/statusline-command.sh --mode zen`, or per process with `STATUSLINE_MODE=zen`.
 
 ### Adaptive Layout
 Lines are fitted to the terminal width (`$COLUMNS`, passed by Claude Code). On narrow terminals the least important segments drop first (duration, provider, token counts…); alerts drop last, model and directory never.
@@ -486,12 +486,14 @@ Set `display.currency` to `idr` to show costs (session, burn rate, today/week sp
 - Current branch, dirty marker, sync status (`=`, `↑2`, `↓1`)
 - Added/removed files, last commit age, commits today
 - Open PR for the branch with CI checks and review state (`PR #18 ✓ approved`), via `gh`, refreshed in the background at most once a minute
+- Without a PR, the checks of the pushed branch tip (GitHub Actions + Vercel-style commit statuses): `▲ ✓` passed, `▲ ◌` running; a failure is a line-1 alert naming the failing checks (`⚠ main ✗ Vercel`), so `zen` and `auto` show it too
 - Stash count (`⚑ 2 stash`, toggle `segments.git.show_stash`) and running Docker containers (`🐳 3`, toggle `segments.dev.show_docker`, refreshed in the background)
 
 ### Development Environment
 - Session name
 - Detected language/framework and package manager
 - Running servers on configured ports
+- Remote dev server started with `rx -d` (`☁ :4241`, port read from the tmux pane on contabo; `☁ rx down` when the session died while live-sync still runs). Checked only while `~/.cache/rx/<repo>.watch.pid` is alive, over `ssh -S none` in the background
 - Subscription renewal tracking
 
 ### Performance

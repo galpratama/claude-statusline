@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-31 — Push status, rx dev server, account in auto
+- Branch checks without a PR: one `gh api graphql` for the `statusCheckRollup` of the pushed branch tip (Actions + Vercel), background-refreshed each minute. `▲ ✓` / `▲ ◌` on line 2; a failure is a line-1 alert `⚠ main ✗ Vercel`, so it shows in zen/auto
+- `rx -d` dev server: `☁ :4241` (port from the tmux pane start command on contabo) or `☁ rx down`; ssh only while the local live-sync pid in `~/.cache/rx/` is alive
+- `mini`/`auto` short line keeps the `@account` badge and shows effort in 2 letters (`lo` `md` `hi` `xh` `mx`, colored like full mode's `◆ High`)
+- `auto` hides cost on both its lines (quiet and alert)
+- `mini`/`auto` short line adds the branch with unpushed commits (`◈ work ⎇ main ↑2`) and `☁ :4241` while an `rx -d` server runs
+- Snapshot cases `ci-fail-rx`, `ci-pass-rx-down`, `auto-account`, `auto-rx`
+
 ## 2026-10-31 — `auto` mode
 - New `auto` mode: the `mini` line while nothing needs attention; any ⚠ alert (ctx, cache, 5h/7d, run-out projection, RAM) or ⇄ account hint swaps it for the `zen` line with bars and warnings
 - Running tools, agents and todos get their own lines in `auto`, the same as in `full`; the git/dev line is never shown
@@ -106,3 +114,6 @@ New functions in `statusline-command.sh`: `format_rate_window`, `format_rate_lim
 - Short rupiah switched to k/M: `Rp12.3k`, `Rp1.34M`
 - session-start-hook.sh falls back to `python` when `python3` is the Windows Store stub
 - patch-honcho.py reads/writes UTF-8 explicitly (Windows Python defaulted to cp1252)
+
+## 2026-10-31
+- `report_herdr_ctx`: inside a herdr pane, reports context % as pane metadata token `ctx` (only on change, backgrounded) so herdr's sidebar can show `$ctx`. Tests 16/16, shellcheck clean.
