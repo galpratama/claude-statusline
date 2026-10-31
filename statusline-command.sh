@@ -2487,7 +2487,10 @@ main() {
     # zen: one line of essentials (prio ≤3) plus alerts; compact: first two lines
     local mode=$STATUSLINE_MODE
     [ -n "$mode" ] || { slurp "${HOME}/.cache/claude-statusline/mode"; mode=$REPLY; }
-    if [ "$mode" = "mini" ]; then
+    # auto: the mini line while quiet, the zen line on an alert, plus live tool/agent/todo lines
+    local auto_alert=""
+    [ "$mode" = "auto" ] && [[ "${s1[*]}" == *⚠* || "${s1[*]}" == *⇄* ]] && auto_alert=1
+    if [ "$mode" = "mini" ] || { [ "$mode" = "auto" ] && [ -z "$auto_alert" ]; }; then
         local -a sm=("0${T}${T}${C_PURPLE}${model}${C_RESET}")
         [ "$SHOW_COST" = "true" ] && sm+=("2${T}${D}${T}${final_cost_color}${final_cost_display}${C_RESET}")
         [ "$context_usage_pct" -gt 0 ] && sm+=("1${T}${D}${T}${C_GRAY}ctx${C_RESET} ${context_usage_color}${context_usage_pct}%${C_RESET}")
@@ -2499,11 +2502,14 @@ main() {
         [ "$lines_added" -gt 0 ] && mini_dir+=" ${C_GREEN}+${lines_added}${C_RESET}"
         [ "$lines_removed" -gt 0 ] && mini_dir+="${C_GRAY}/${C_RESET}${C_RED}-${lines_removed}${C_RESET}"
         sm+=("5${T}${D}${T}${mini_dir}")
-        fit_line "$((line_width + 2))" "${sm[@]}"
-        printf "  %b\n" "$REPLY"
-        return
+        if [ "$mode" = "mini" ]; then
+            fit_line "$((line_width + 2))" "${sm[@]}"
+            printf "  %b\n" "$REPLY"
+            return
+        fi
+        s1=("${sm[@]}")
     fi
-    if [ "$mode" = "zen" ]; then
+    if [ "$mode" = "zen" ] || [ -n "$auto_alert" ]; then
         local -a zen_segs=()
         local seg
         for seg in "${s1[@]}"; do
@@ -2611,7 +2617,7 @@ main() {
     [ "$SHOW_TOOLS" = "true" ] && [ -n "$stats_sec" ] && s2+=("9${T}${SEP}${T}${stats_sec}")
     [ -n "$dev_cfg" ] && s2+=("4${T}${SEP}${T}${dev_cfg}")
 
-    fit_line "$line_width" "${s2[@]}"; out_lines+=("$REPLY")
+    fit_line "$line_width" "${s2[@]}"; [ "$mode" = "auto" ] || out_lines+=("$REPLY")
 
     # --- Dynamic lines: Tools, Agents, Todos (only when active) ---
     if [ "$SHOW_RUNNING_TOOLS" = "true" ] && { [ "$running_tools_count" -gt 0 ] || [ -n "$completed_tools_output" ]; }; then
@@ -2683,13 +2689,13 @@ main() {
     done
 }
 
-# `statusline-command.sh --mode mini|zen|compact|full` switches the layout for every session
+# `statusline-command.sh --mode auto|mini|zen|compact|full` switches the layout for every session
 if [ "$1" = "--mode" ]; then
     case "$2" in
-        mini|zen|compact|full)
+        auto|mini|zen|compact|full)
             mkdir -p "${HOME}/.cache/claude-statusline" && echo "$2" > "${HOME}/.cache/claude-statusline/mode"
             echo "statusline mode: $2"; exit 0 ;;
-        *) echo "usage: $0 --mode mini|zen|compact|full" >&2; exit 1 ;;
+        *) echo "usage: $0 --mode auto|mini|zen|compact|full" >&2; exit 1 ;;
     esac
 fi
 

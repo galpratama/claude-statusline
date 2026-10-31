@@ -460,7 +460,7 @@ Sessions launched with `CLAUDE_CONFIG_DIR` (one config dir per account) show the
 A macOS notification (once per usage window / session) when a usage limit hits 90% or is projected to run out before it resets, and when context reaches 90%. Disable with `"features": {"notifications": false}`.
 
 ### Modes
-`full` (default), `compact` (first two lines), `zen` (one line: model, cost, context, limits + alerts) or `mini` (one short line, no bars: model · cost · ctx% · 5h% · 7d% · dir +/-). Switch for every session with `~/Scripts/claude-statusline/statusline-command.sh --mode zen`, or per process with `STATUSLINE_MODE=zen`.
+`full` (default), `compact` (first two lines), `zen` (one line: model, cost, context, limits + alerts), `mini` (one short line, no bars: model · cost · ctx% · 5h% · 7d% · dir +/-) or `auto` (the mini line while quiet; on a ⚠ alert it becomes the zen line, and running tools, agents and todos get their own lines). Switch for every session with `~/Scripts/claude-statusline/statusline-command.sh --mode zen`, or per process with `STATUSLINE_MODE=zen`.
 
 ### Adaptive Layout
 Lines are fitted to the terminal width (`$COLUMNS`, passed by Claude Code). On narrow terminals the least important segments drop first (duration, provider, token counts…); alerts drop last, model and directory never.

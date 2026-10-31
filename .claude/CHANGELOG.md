@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-31 — `auto` mode
+- New `auto` mode: the `mini` line while nothing needs attention; any ⚠ alert (ctx, cache, 5h/7d, run-out projection, RAM) or ⇄ account hint swaps it for the `zen` line with bars and warnings
+- Running tools, agents and todos get their own lines in `auto`, the same as in `full`; the git/dev line is never shown
+- Snapshot cases `tests/cases/auto-alert` and `tests/cases/auto-quiet`
+
 ## 2026-10-31 — `mini` mode
 - New `mini` mode: one short line with no bars or gutter: `Opus 5.5 1M · $2.84 · ctx 88% · 5h 64% · 7d 23% · ◈ work +212/-87`; percentages keep their gradient colors and segments drop by priority on narrow terminals
 - `--mode mini` accepted; snapshot case `tests/cases/mini`; README + CLAUDE.md updated
