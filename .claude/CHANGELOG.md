@@ -1,5 +1,8 @@
 # Changelog
 
+## 2026-11-14 — Tests find gh outside the system dirs
+- `tests/run.sh` adds the directory of `gh` to the test PATH like `jq` and `git`, so `ci-fail-rx` and `ci-pass-rx-down` pass where gh lives in a version manager (mise on Linux)
+
 ## 2026-10-31 — Push status, rx dev server, account in auto
 - Branch checks without a PR: one `gh api graphql` for the `statusCheckRollup` of the pushed branch tip (Actions + Vercel), background-refreshed each minute. `▲ ✓` / `▲ ◌` on line 2; a failure is a line-1 alert `⚠ main ✗ Vercel`, so it shows in zen/auto
 - `rx -d` dev server: `☁ :4241` (port from the tmux pane start command on contabo) or `☁ rx down`; ssh only while the local live-sync pid in `~/.cache/rx/` is alive

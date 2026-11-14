@@ -12,9 +12,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT/statusline-command.sh"
 UPDATE=""; [ "$1" = "--update" ] && UPDATE=1
 NOW=1767225600  # 2026-01-01T00:00:00Z
-# jq/git dirs go last: Windows keeps them outside the system dirs (WinGet\Links, /mingw64/bin)
+# jq/git/gh dirs go last: Windows keeps them outside the system dirs (WinGet\Links, /mingw64/bin),
+# and Linux version managers (mise, asdf) keep gh in the home dir; without gh the CI cases fail
 TOOL_DIRS=""
-for t in jq git; do p=$(command -v "$t") && TOOL_DIRS+=":${p%/*}"; done
+for t in jq git gh; do p=$(command -v "$t") && TOOL_DIRS+=":${p%/*}"; done
 pass=0; fail=0
 
 strip() { perl -pe 's/\e\[[0-9;]*m//g'; }
